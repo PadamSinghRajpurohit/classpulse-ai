@@ -124,6 +124,7 @@ input:focus { border-color: rgba(184,165,255,.72); box-shadow: 0 0 0 3px rgba(18
 .camera-controls .button:disabled { cursor: default; }
 .camera-status { margin-left: auto; color: #858da7; font-size: 9px; text-align: right; }
 .camera-status.live { color: var(--mint); }.camera-status.error { color: #ff9eab; }
+.face-count-readout { margin: 0 0 9px; color: #b6c0d8; font-size: 9px; line-height: 1.5; }
 .camera-live-indicator { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: #5c637c; }
 .camera-live-indicator.live { background: var(--mint); box-shadow: 0 0 0 4px rgba(121,224,196,.1), 0 0 12px rgba(121,224,196,.75); }
 .camera-stage { position: relative; display: flex; align-items: center; justify-content: center; width: 100%; aspect-ratio: 16 / 9; max-height: 300px; overflow: hidden; border: 1px solid rgba(180,187,225,.12); border-radius: 10px; background: #0b1020; }

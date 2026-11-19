@@ -49,6 +49,11 @@
   }
 
   let cameraStream = null;
+  let faceDetector = null;
+  let faceCountTimer = null;
+  let faceCounts = [];
+  let lastVideoTime = -1;
+  let autoFaceCount = true;
 
   function cameraStatus(text, error = false, live = false) {
     const status = $("camera-status");
@@ -60,7 +65,16 @@
     indicator.classList.toggle("live", live);
   }
 
-  function stopCameraPreview(text = "Camera is off", error = false) {
+  function stopCameraPreview(text = "Camera is off · manual entry available", error = false) {
+    if (faceCountTimer !== null) window.clearTimeout(faceCountTimer);
+    faceCountTimer = null;
+    if (faceDetector) {
+      try { faceDetector.close(); } catch { /* Detector may already be closed. */ }
+      faceDetector = null;
+    }
+    faceCounts = [];
+    lastVideoTime = -1;
+    autoFaceCount = true;
     if (cameraStream) {
       cameraStream.getTracks().forEach((track) => {
         try { track.stop(); } catch { /* Track may already have ended. */ }
@@ -76,7 +90,67 @@
     $("camera-placeholder")?.classList.remove("hidden");
     if ($("camera-start")) $("camera-start").disabled = false;
     if ($("camera-stop")) $("camera-stop").disabled = true;
+    if ($("camera-count-toggle")) {
+      $("camera-count-toggle").disabled = true;
+      $("camera-count-toggle").textContent = "Pause auto count";
+    }
     cameraStatus(text, error, false);
+  }
+
+  async function startFaceCounting(video) {
+    cameraStatus("Loading on-device face counter…", false, true);
+    try {
+      // Load the free MediaPipe runtime only after the user explicitly starts the camera.
+      const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs");
+      if (!cameraStream) return;
+      const files = await vision.FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm",
+      );
+      faceDetector = await vision.FaceDetector.createFromOptions(files, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/latest/blaze_face_full_range.tflite",
+        },
+        runningMode: "VIDEO",
+        minDetectionConfidence: 0.55,
+        minSuppressionThreshold: 0.3,
+      });
+      if (!cameraStream) {
+        faceDetector.close();
+        faceDetector = null;
+        return;
+      }
+      $("camera-count-toggle").disabled = false;
+      cameraStatus("Counting visible faces on this device…", false, true);
+      countVisibleFaces(video);
+    } catch {
+      if (cameraStream) cameraStatus("Camera is on · counter unavailable; enter the count manually", true, true);
+      if (faceDetector) {
+        try { faceDetector.close(); } catch { /* Ignore cleanup errors. */ }
+        faceDetector = null;
+      }
+    }
+  }
+
+  function countVisibleFaces(video) {
+    if (!cameraStream || !faceDetector || !autoFaceCount) return;
+    try {
+      if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        const detections = faceDetector.detectForVideo(video, performance.now()).detections || [];
+        faceCounts.push(detections.length);
+        if (faceCounts.length > 5) faceCounts.shift();
+        const sorted = [...faceCounts].sort((a, b) => a - b);
+        const estimate = sorted[Math.floor(sorted.length / 2)];
+        const attendance = $("attendance");
+        attendance.value = String(estimate);
+        $("face-count-readout").textContent = `Approx. ${estimate} visible face${estimate === 1 ? "" : "s"} · adjust Present today if needed.`;
+        updatePreview();
+      }
+    } catch {
+      cameraStatus("Camera is on · count paused; enter the count manually", true, true);
+      return;
+    }
+    faceCountTimer = window.setTimeout(() => countVisibleFaces(video), 700);
   }
 
   async function startCameraPreview() {
@@ -106,7 +180,9 @@
       $("camera-placeholder").classList.add("hidden");
       $("camera-stop").disabled = false;
       start.disabled = true;
-      cameraStatus("Live preview · camera on", false, true);
+      $("camera-count-toggle").disabled = true;
+      cameraStatus("Camera on · preparing on-device counter…", false, true);
+      await startFaceCounting(video);
       cameraStream.getVideoTracks().forEach((track) => {
         track.addEventListener("ended", () => stopCameraPreview("Camera stream ended"), { once: true });
       });
@@ -309,6 +385,18 @@
     $("auth-form").addEventListener("submit", authenticate);
     $("logout-button").addEventListener("click", signOut);
     $("camera-start").addEventListener("click", startCameraPreview);
+    $("camera-count-toggle").addEventListener("click", () => {
+      autoFaceCount = !autoFaceCount;
+      $("camera-count-toggle").textContent = autoFaceCount ? "Pause auto count" : "Resume auto count";
+      if (faceCountTimer !== null) window.clearTimeout(faceCountTimer);
+      faceCountTimer = null;
+      if (autoFaceCount && cameraStream && faceDetector) {
+        cameraStatus("Counting visible faces on this device…", false, true);
+        countVisibleFaces($("camera-video"));
+      } else if (cameraStream) {
+        cameraStatus("Auto count paused · edit the total manually", false, true);
+      }
+    });
     $("camera-stop").addEventListener("click", () => stopCameraPreview());
     $("camera-facing").addEventListener("change", () => {
       if (cameraStream) stopCameraPreview("Preview stopped · press Start to switch cameras");

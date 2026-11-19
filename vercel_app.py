@@ -95,8 +95,10 @@ def application(environ: dict, start_response: StartResponse) -> list[bytes]:
         if parsed.scheme == "https" and parsed.hostname and parsed.hostname.endswith(".supabase.co"):
             origin = f"https://{parsed.hostname}"
     csp = (
-        "default-src 'self'; script-src 'self'; style-src 'self'; worker-src 'self'; img-src 'self' data:; "
-        f"connect-src 'self' {origin}; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'"
+        "default-src 'self'; script-src 'self' 'wasm-unsafe-eval' https://cdn.jsdelivr.net; style-src 'self'; "
+        "worker-src 'self' blob:; img-src 'self' data:; "
+        f"connect-src 'self' {origin} https://cdn.jsdelivr.net https://storage.googleapis.com; "
+        "base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'"
     )
     response_headers = [
         ("Content-Type", content_type),
