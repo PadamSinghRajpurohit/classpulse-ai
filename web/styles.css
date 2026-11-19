@@ -176,6 +176,7 @@ input:focus { border-color: rgba(184,165,255,.72); box-shadow: 0 0 0 3px rgba(18
 .monthly-table .table-empty { padding: 16px; color: var(--subtle); text-align: center; }
 .analytics-actions { display: flex; align-items: center; justify-content: space-between; gap: 9px; margin-top: 10px; }
 .analytics-actions .button { min-height: 32px; padding: 0 10px; font-size: 9px; }.analytics-actions span { color: var(--subtle); font-size: 8px; text-align: right; }
+.analytics-actions span.error { color: var(--rose); }
 .recent-divider { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 22px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
 .session-list { margin-top: 0; }
 .dashboard-footer { min-height: 56px; margin-top: 20px; font-size: 9px; }

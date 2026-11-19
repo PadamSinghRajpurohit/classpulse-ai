@@ -3,6 +3,9 @@
 (() => {
   const $ = (id) => document.getElementById(id);
   const view = { config: null, user: null, accessToken: null, mode: "signin", sessions: [] };
+  const MEDIAPIPE_VERSION = "1.2.3";
+  const MEDIAPIPE_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}`;
+  const FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/latest/blaze_face_full_range.tflite";
 
   function message(id, text, error = false) {
     const node = $(id);
@@ -116,14 +119,14 @@
     cameraStatus("Loading on-device face counter…", false, true);
     try {
       // Load the free MediaPipe runtime only after the user explicitly starts the camera.
-      const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/vision_bundle.mjs");
+      const vision = await import(`${MEDIAPIPE_BASE}/vision_bundle.mjs`);
       if (!cameraStream) return;
       const files = await vision.FilesetResolver.forVisionTasks(
-        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22/wasm",
+        `${MEDIAPIPE_BASE}/wasm`,
       );
       faceDetector = await vision.FaceDetector.createFromOptions(files, {
         baseOptions: {
-          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/latest/blaze_face_full_range.tflite",
+          modelAssetPath: FACE_MODEL_URL,
         },
         runningMode: "VIDEO",
         minDetectionConfidence: 0.55,
@@ -137,10 +140,11 @@
       $("camera-count-toggle").disabled = false;
       cameraStatus("Counting visible faces on this device…", false, true);
       countVisibleFaces(video);
-    } catch {
+    } catch (error) {
       if (cameraStream) {
-        cameraStatus("Camera is on · counter unavailable; enter the count manually", true, true);
-        $("face-count-readout").textContent = "The on-device counter could not load. Check your connection and enter the present total manually.";
+        cameraStatus("Camera is on · face counter failed to load", true, true);
+        const details = typeof error?.message === "string" ? error.message.slice(0, 160) : "unknown loading error";
+        $("face-count-readout").textContent = `On-device face counting could not start (${details}). Enter the present total manually.`;
       }
       if (faceDetector) {
         try { faceDetector.close(); } catch { /* Ignore cleanup errors. */ }
@@ -276,6 +280,9 @@
   }
 
   async function loadSessions() {
+    const loadNote = $("analytics-load-note");
+    loadNote.classList.remove("error");
+    loadNote.textContent = "Loading your secure session history…";
     try {
       const pageSize = 500;
       const rows = [];
@@ -296,8 +303,15 @@
       }
       view.sessions = rows;
       renderSessions();
+      loadNote.textContent = rows.length
+        ? `${rows.length} saved session${rows.length === 1 ? "" : "s"} · times shown in your local timezone`
+        : "No sessions saved for this account yet. Save a session to build your monthly analytics.";
     } catch (error) {
-      message("session-message", `Signed in, but summaries could not be loaded: ${error.message}`, true);
+      view.sessions = [];
+      renderSessions();
+      loadNote.textContent = `Saved data could not load: ${error.message || "check your connection and Supabase access"}`;
+      loadNote.classList.add("error");
+      message("session-message", "The dashboard could not load your saved summaries. See the analytics panel for details.", true);
     }
   }
 
