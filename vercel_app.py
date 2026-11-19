@@ -24,7 +24,7 @@ def _send(start_response: StartResponse, status: str, body: bytes, content_type:
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ("X-Frame-Options", "DENY"),
-        ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+        ("Permissions-Policy", "camera=(self), microphone=(), geolocation=()"),
     ])
     return [body]
 
@@ -57,8 +57,15 @@ def application(environ: dict, start_response: StartResponse) -> list[bytes]:
     asset_map = {
         "/": (WEB / "index.html", "text/html; charset=utf-8"),
         "/index.html": (WEB / "index.html", "text/html; charset=utf-8"),
+        "/manifest.webmanifest": (WEB / "manifest.webmanifest", "application/manifest+json; charset=utf-8"),
+        "/service-worker.js": (WEB / "service-worker.js", "application/javascript; charset=utf-8"),
         "/assets/styles.css": (WEB / "styles.css", "text/css; charset=utf-8"),
         "/assets/app.js": (WEB / "app.js", "text/javascript; charset=utf-8"),
+        "/assets/pwa.js": (WEB / "assets" / "pwa.js", "text/javascript; charset=utf-8"),
+        "/assets/pwa.css": (WEB / "assets" / "pwa.css", "text/css; charset=utf-8"),
+        "/assets/icon-192.png": (WEB / "assets" / "icon-192.png", "image/png"),
+        "/assets/icon-512.png": (WEB / "assets" / "icon-512.png", "image/png"),
+        "/assets/icon-maskable-512.png": (WEB / "assets" / "icon-maskable-512.png", "image/png"),
     }
     asset = asset_map.get(path)
     if asset is None:
@@ -69,6 +76,18 @@ def application(environ: dict, start_response: StartResponse) -> list[bytes]:
     except OSError:
         return _send(start_response, "503 Service Unavailable", b"ClassPulse assets are unavailable", "text/plain; charset=utf-8")
 
+    if path in {"/", "/index.html"}:
+        markup = body.decode("utf-8")
+        pwa_head = (
+            '<link rel="manifest" href="/manifest.webmanifest">\n'
+            '<link rel="apple-touch-icon" href="/assets/icon-192.png">\n'
+            '<meta name="apple-mobile-web-app-capable" content="yes">\n'
+            '<link rel="stylesheet" href="/assets/pwa.css">\n'
+        )
+        markup = markup.replace("</head>", pwa_head + "</head>", 1)
+        markup = markup.replace("</body>", '<script src="/assets/pwa.js" defer></script>\n</body>', 1)
+        body = markup.encode("utf-8")
+
     origin = "'self'"
     supabase_url = os.getenv("SUPABASE_URL", "").strip()
     if supabase_url:
@@ -76,17 +95,20 @@ def application(environ: dict, start_response: StartResponse) -> list[bytes]:
         if parsed.scheme == "https" and parsed.hostname and parsed.hostname.endswith(".supabase.co"):
             origin = f"https://{parsed.hostname}"
     csp = (
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+        "default-src 'self'; script-src 'self'; style-src 'self'; worker-src 'self'; img-src 'self' data:; "
         f"connect-src 'self' {origin}; base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'none'"
     )
-    start_response("200 OK", [
+    response_headers = [
         ("Content-Type", content_type),
         ("Content-Length", str(len(body))),
-        ("Cache-Control", "public, max-age=300" if path != "/" else "no-cache"),
+        ("Cache-Control", "no-cache" if path in {"/", "/index.html", "/service-worker.js", "/manifest.webmanifest"} else "public, max-age=300"),
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ("X-Frame-Options", "DENY"),
-        ("Permissions-Policy", "camera=(), microphone=(), geolocation=()"),
+        ("Permissions-Policy", "camera=(self), microphone=(), geolocation=()"),
         ("Content-Security-Policy", csp),
-    ])
+    ]
+    if path == "/service-worker.js":
+        response_headers.append(("Service-Worker-Allowed", "/"))
+    start_response("200 OK", response_headers)
     return [body if method == "GET" else b""]
