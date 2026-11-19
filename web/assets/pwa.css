@@ -1,0 +1,2 @@
+/* Kept separate so the WSGI shell can attach PWA styles without changing the UI bundle. */
+.pwa-install { white-space: nowrap; }
