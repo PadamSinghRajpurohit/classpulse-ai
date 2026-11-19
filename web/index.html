@@ -72,11 +72,33 @@
         <section class="panel session-panel" aria-labelledby="session-title">
           <div class="panel-heading"><div><span class="section-label">NEW SESSION</span><h2 id="session-title">Capture the class pulse</h2></div><span class="panel-mark">✳</span></div>
           <p class="panel-copy">Add aggregate totals only. Student names and individual records are not requested here.</p>
+          <section class="camera-preview" aria-labelledby="camera-preview-title">
+            <div class="camera-preview-heading">
+              <div><span class="camera-preview-kicker">OPTIONAL · PREVIEW ONLY</span><h3 id="camera-preview-title">Check your camera framing</h3></div>
+              <span class="camera-live-indicator" id="camera-live-indicator" aria-hidden="true"></span>
+            </div>
+            <p class="camera-preview-copy">Camera access starts only when you press Start. Nothing is captured, recorded, uploaded, or analyzed.</p>
+            <div class="camera-controls">
+              <label class="sr-only" for="camera-facing">Camera direction</label>
+              <select id="camera-facing" aria-label="Camera direction">
+                <option value="user">Front camera</option>
+                <option value="environment">Rear camera</option>
+              </select>
+              <button class="button button-primary" id="camera-start" type="button">Start preview</button>
+              <button class="button button-quiet" id="camera-stop" type="button" disabled>Stop</button>
+              <span class="camera-status" id="camera-status" role="status" aria-live="polite">Camera is off</span>
+            </div>
+            <div class="camera-stage" id="camera-stage">
+              <video id="camera-video" autoplay playsinline muted aria-label="Live camera preview"></video>
+              <div class="camera-placeholder" id="camera-placeholder"><span class="camera-lens" aria-hidden="true">◎</span><span>Live preview is off</span><small>Press Start when you’re ready to view your camera.</small></div>
+            </div>
+            <p class="camera-privacy-note"><span aria-hidden="true">⌑</span> Preview stays in this browser. Stopping or leaving the page closes the camera stream.</p>
+          </section>
           <form id="session-form" class="session-form">
             <div class="form-field full-width"><label for="class-name">Class or subject label</label><input id="class-name" name="className" type="text" placeholder="e.g. Biology · Period 2" minlength="1" maxlength="120" required></div>
             <div class="form-field"><label for="enrollment">Learners enrolled</label><input id="enrollment" name="enrollment" type="number" min="1" max="1000" placeholder="28" required></div>
             <div class="form-field"><label for="attendance">Present today</label><input id="attendance" name="attendance" type="number" min="0" max="1000" placeholder="25" required></div>
-            <div class="form-field full-width"><div class="label-row"><label for="participation">Participation moments</label><span class="field-hint">Group total</span></div><input id="participation" name="participation" type="number" min="0" max="10000" placeholder="18" value="0" required></div>
+            <div class="form-field full-width"><div class="label-row"><label for="participation">Participation contributions</label><span class="field-hint">Group total</span></div><input id="participation" name="participation" type="number" min="0" max="10000" placeholder="18" value="0" aria-describedby="participation-help" required><small class="form-help" id="participation-help">Count class contributions such as questions, answers, and discussion comments. This is a teacher-entered group estimate.</small></div>
             <div class="insight-preview full-width" id="insight-preview"><span class="insight-spark">✳</span><span>Add attendance totals to see a group-level pulse estimate.</span></div>
             <button class="button button-primary button-full full-width" id="save-session" type="submit">Save session summary <span aria-hidden="true">→</span></button>
           </form>

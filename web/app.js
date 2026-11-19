@@ -48,6 +48,78 @@
     if (busy) button.textContent = label;
   }
 
+  let cameraStream = null;
+
+  function cameraStatus(text, error = false, live = false) {
+    const status = $("camera-status");
+    const indicator = $("camera-live-indicator");
+    if (!status || !indicator) return;
+    status.textContent = text;
+    status.classList.toggle("error", error);
+    status.classList.toggle("live", live);
+    indicator.classList.toggle("live", live);
+  }
+
+  function stopCameraPreview(text = "Camera is off", error = false) {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => {
+        try { track.stop(); } catch { /* Track may already have ended. */ }
+      });
+      cameraStream = null;
+    }
+    const video = $("camera-video");
+    if (video) {
+      video.pause();
+      video.srcObject = null;
+      video.classList.remove("active");
+    }
+    $("camera-placeholder")?.classList.remove("hidden");
+    if ($("camera-start")) $("camera-start").disabled = false;
+    if ($("camera-stop")) $("camera-stop").disabled = true;
+    cameraStatus(text, error, false);
+  }
+
+  async function startCameraPreview() {
+    if (cameraStream) return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      cameraStatus("Use localhost or HTTPS to preview camera", true);
+      return;
+    }
+    const start = $("camera-start");
+    start.disabled = true;
+    cameraStatus("Waiting for camera permission…");
+    try {
+      // Request video only, and only in response to the user's Start click.
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: { ideal: $("camera-facing").value },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      });
+      const video = $("camera-video");
+      video.srcObject = cameraStream;
+      video.classList.add("active");
+      video.classList.toggle("mirrored", $("camera-facing").value === "user");
+      await video.play();
+      $("camera-placeholder").classList.add("hidden");
+      $("camera-stop").disabled = false;
+      start.disabled = true;
+      cameraStatus("Live preview · camera on", false, true);
+      cameraStream.getVideoTracks().forEach((track) => {
+        track.addEventListener("ended", () => stopCameraPreview("Camera stream ended"), { once: true });
+      });
+    } catch (error) {
+      stopCameraPreview(
+        error?.name === "NotAllowedError"
+          ? "Camera permission was not granted"
+          : "Camera unavailable · check device and browser settings",
+        true,
+      );
+    }
+  }
+
   async function authenticate(event) {
     event.preventDefault();
     message("auth-message", "");
@@ -87,6 +159,7 @@
   }
 
   function signOut() {
+    stopCameraPreview();
     // The token is memory-only: reloads and sign-out discard it from this page.
     const token = view.accessToken;
     if (token) {
@@ -235,6 +308,16 @@
     $("signup-tab").addEventListener("click", () => setMode("signup"));
     $("auth-form").addEventListener("submit", authenticate);
     $("logout-button").addEventListener("click", signOut);
+    $("camera-start").addEventListener("click", startCameraPreview);
+    $("camera-stop").addEventListener("click", () => stopCameraPreview());
+    $("camera-facing").addEventListener("change", () => {
+      if (cameraStream) stopCameraPreview("Preview stopped · press Start to switch cameras");
+    });
+    window.addEventListener("pagehide", () => stopCameraPreview());
+    window.addEventListener("beforeunload", () => stopCameraPreview());
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && cameraStream) stopCameraPreview("Preview stopped while page was hidden");
+    });
     $("session-form").addEventListener("submit", saveSession);
     ["enrollment", "attendance", "participation"].forEach((id) => $(id).addEventListener("input", updatePreview));
     try {
