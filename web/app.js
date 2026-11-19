@@ -10,6 +10,21 @@
     node.classList.toggle("error", Boolean(error));
   }
 
+  function applyTheme(theme) {
+    const selected = theme === "light" ? "light" : "dark";
+    document.documentElement.dataset.theme = selected;
+    const themeColor = document.querySelector('meta[name="theme-color"]');
+    if (themeColor) themeColor.content = selected === "dark" ? "#0c1021" : "#f3f5fb";
+    const button = $("theme-toggle");
+    if (button) {
+      const dark = selected === "dark";
+      button.textContent = dark ? "☼ Light mode" : "◐ Dark mode";
+      button.setAttribute("aria-pressed", String(dark));
+      button.setAttribute("aria-label", dark ? "Switch to light mode" : "Switch to dark mode");
+    }
+    try { localStorage.setItem("classpulse-theme", selected); } catch { /* Theme still applies for this page. */ }
+  }
+
   function errorText(payload, fallback) {
     if (!payload || typeof payload !== "object") return fallback;
     const raw = payload.msg || payload.message || payload.error_description || payload.error;
@@ -123,7 +138,10 @@
       cameraStatus("Counting visible faces on this device…", false, true);
       countVisibleFaces(video);
     } catch {
-      if (cameraStream) cameraStatus("Camera is on · counter unavailable; enter the count manually", true, true);
+      if (cameraStream) {
+        cameraStatus("Camera is on · counter unavailable; enter the count manually", true, true);
+        $("face-count-readout").textContent = "The on-device counter could not load. Check your connection and enter the present total manually.";
+      }
       if (faceDetector) {
         try { faceDetector.close(); } catch { /* Ignore cleanup errors. */ }
         faceDetector = null;
@@ -164,7 +182,7 @@
     cameraStatus("Waiting for camera permission…");
     try {
       // Request video only, and only in response to the user's Start click.
-      cameraStream = await navigator.mediaDevices.getUserMedia({
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
           facingMode: { ideal: $("camera-facing").value },
@@ -172,8 +190,9 @@
           height: { ideal: 720 },
         },
       });
+      cameraStream = stream;
       const video = $("camera-video");
-      video.srcObject = cameraStream;
+      video.srcObject = stream;
       video.classList.add("active");
       video.classList.toggle("mirrored", $("camera-facing").value === "user");
       await video.play();
@@ -182,10 +201,12 @@
       start.disabled = true;
       $("camera-count-toggle").disabled = true;
       cameraStatus("Camera on · preparing on-device counter…", false, true);
-      await startFaceCounting(video);
-      cameraStream.getVideoTracks().forEach((track) => {
-        track.addEventListener("ended", () => stopCameraPreview("Camera stream ended"), { once: true });
+      stream.getVideoTracks().forEach((track) => {
+        track.addEventListener("ended", () => {
+          if (cameraStream === stream) stopCameraPreview("Camera stream ended · enter the count manually");
+        }, { once: true });
       });
+      await startFaceCounting(video);
     } catch (error) {
       stopCameraPreview(
         error?.name === "NotAllowedError"
@@ -255,17 +276,25 @@
   }
 
   async function loadSessions() {
-    const query = new URLSearchParams({
-      select: "id,class_name,started_at,enrollment_count,attendance_count,engagement_score,participation_count",
-      owner_id: `eq.${view.user.id}`,
-      order: "started_at.desc",
-      limit: "50",
-    });
     try {
-      const rows = await request(`/rest/v1/classpulse_session_summaries?${query.toString()}`, {
-        headers: { Authorization: `Bearer ${view.accessToken}` },
-      });
-      view.sessions = Array.isArray(rows) ? rows : [];
+      const pageSize = 500;
+      const rows = [];
+      for (let offset = 0; ; offset += pageSize) {
+        const query = new URLSearchParams({
+          select: "id,class_name,started_at,enrollment_count,attendance_count,engagement_score,participation_count",
+          owner_id: `eq.${view.user.id}`,
+          order: "started_at.desc",
+          limit: String(pageSize),
+          offset: String(offset),
+        });
+        const page = await request(`/rest/v1/classpulse_session_summaries?${query.toString()}`, {
+          headers: { Authorization: `Bearer ${view.accessToken}` },
+        });
+        if (!Array.isArray(page)) throw new Error("The session list returned an unexpected response.");
+        rows.push(...page);
+        if (page.length < pageSize) break;
+      }
+      view.sessions = rows;
       renderSessions();
     } catch (error) {
       message("session-message", `Signed in, but summaries could not be loaded: ${error.message}`, true);
@@ -279,7 +308,7 @@
     const totalEnrolled = rows.reduce((sum, row) => sum + Number(row.enrollment_count || 0), 0);
     const totalPresent = rows.reduce((sum, row) => sum + Number(row.attendance_count || 0), 0);
     const avgAttendance = totalEnrolled ? Math.round((totalPresent / totalEnrolled) * 100) : null;
-    const scores = rows.map((row) => Number(row.engagement_score)).filter((score) => Number.isFinite(score));
+    const scores = rows.map((row) => row.engagement_score).filter((score) => score !== null && score !== undefined && score !== "").map(Number).filter(Number.isFinite);
     const avgScore = scores.length ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) : null;
     $("attendance-rate").textContent = avgAttendance === null ? "—" : String(avgAttendance);
     $("engagement-rate").textContent = avgScore === null ? "—" : String(avgScore);
@@ -292,22 +321,163 @@
       const orbit = document.createElement("span"); orbit.className = "empty-orbit"; orbit.textContent = "◌";
       const strong = document.createElement("strong"); strong.textContent = "Your first session starts here";
       const p = document.createElement("p"); p.textContent = "Save a session summary and it will show up in this list.";
-      empty.append(orbit, strong, p); list.append(empty); return;
+      empty.append(orbit, strong, p); list.append(empty);
+      renderMonthlyAnalytics();
+      return;
     }
-    for (const row of rows) {
+    for (const row of rows.slice(0, 5)) {
       const item = document.createElement("article"); item.className = "session-row";
       const info = document.createElement("div"); info.className = "session-info";
       const title = document.createElement("strong"); title.textContent = row.class_name || "Class session";
       const details = document.createElement("span");
       const date = row.started_at ? new Date(row.started_at) : new Date();
-      const dateText = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
+      const dateText = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
       details.textContent = `${dateText} · ${Number(row.attendance_count || 0)} / ${Number(row.enrollment_count || 0)} present`;
       info.append(title, details);
       const score = document.createElement("div"); score.className = "session-score";
-      score.textContent = Number.isFinite(Number(row.engagement_score)) ? String(Math.round(Number(row.engagement_score))) : "—";
+      score.textContent = row.engagement_score !== null && row.engagement_score !== undefined && row.engagement_score !== "" && Number.isFinite(Number(row.engagement_score)) ? String(Math.round(Number(row.engagement_score))) : "—";
       const scoreLabel = document.createElement("small"); scoreLabel.textContent = "pulse / 100"; score.append(scoreLabel);
       item.append(info, score); list.append(item);
     }
+    renderMonthlyAnalytics();
+  }
+
+  const svgElement = (name, attrs = {}, text = "") => {
+    const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+    if (text) node.textContent = text;
+    return node;
+  };
+
+  function localMonthKey(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  function localDateTimeValue(date = new Date()) {
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+    return local.toISOString().slice(0, 16);
+  }
+
+  function selectedMonthRows() {
+    const month = $("analytics-month").value || localMonthKey(new Date());
+    return view.sessions.filter((row) => {
+      const timestamp = new Date(row.started_at || "");
+      return Number.isFinite(timestamp.getTime()) && localMonthKey(timestamp) === month;
+    }).sort((a, b) => new Date(a.started_at) - new Date(b.started_at));
+  }
+
+  function renderMonthlyAnalytics() {
+    const monthInput = $("analytics-month");
+    if (!monthInput.value) monthInput.value = localMonthKey(new Date());
+    const rows = selectedMonthRows();
+    const selectedDate = new Date(`${monthInput.value}-01T12:00:00`);
+    const monthLabel = Number.isFinite(selectedDate.getTime())
+      ? new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(selectedDate)
+      : "Selected month";
+    $("analytics-month-label").textContent = `${monthLabel} · ${rows.length} saved session${rows.length === 1 ? "" : "s"}`;
+    $("monthly-table-caption").textContent = `${monthLabel} session details · local date and time`;
+    $("month-sessions").textContent = String(rows.length);
+    const enrolled = rows.reduce((total, row) => total + Number(row.enrollment_count || 0), 0);
+    const present = rows.reduce((total, row) => total + Number(row.attendance_count || 0), 0);
+    $("month-attendance").textContent = enrolled ? `${Math.round((present / enrolled) * 100)}%` : "—";
+    const scores = rows.map((row) => row.engagement_score).filter((score) => score !== null && score !== undefined && score !== "").map(Number).filter(Number.isFinite);
+    $("month-pulse").textContent = scores.length ? String(Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)) : "—";
+    $("month-contributions").textContent = String(rows.reduce((sum, row) => sum + Number(row.participation_count || 0), 0));
+    renderAnalyticsChart(rows, monthLabel);
+    renderMonthlyTable(rows);
+    $("export-month").disabled = rows.length === 0;
+  }
+
+  function renderAnalyticsChart(rows, monthLabel) {
+    const frame = $("analytics-chart");
+    frame.replaceChildren();
+    const chartRows = rows.filter((row) => Number(row.enrollment_count) > 0 || (row.engagement_score !== null && row.engagement_score !== undefined && row.engagement_score !== "" && Number.isFinite(Number(row.engagement_score))));
+    if (!chartRows.length) {
+      const empty = document.createElement("div");
+      empty.className = "chart-empty";
+      empty.textContent = `No session data for ${monthLabel}. Save a session summary to start the trend.`;
+      frame.append(empty);
+      return;
+    }
+    const svg = svgElement("svg", { viewBox: "0 0 680 250", role: "img", "aria-label": `Attendance rate and engagement pulse for ${monthLabel}, across ${chartRows.length} saved sessions` });
+    const left = 40, right = 666, top = 20, bottom = 210;
+    for (const tick of [0, 25, 50, 75, 100]) {
+      const y = bottom - (tick / 100) * (bottom - top);
+      svg.append(svgElement("line", { x1: left, x2: right, y1: y, y2: y, class: "chart-grid-line" }));
+      svg.append(svgElement("text", { x: left - 9, y: y + 4, "text-anchor": "end", class: "chart-axis-label" }, String(tick)));
+    }
+    const xAt = (index) => chartRows.length === 1 ? (left + right) / 2 : left + (index / (chartRows.length - 1)) * (right - left);
+    const yAt = (value) => bottom - (Math.max(0, Math.min(100, value)) / 100) * (bottom - top);
+    const attendancePoints = [];
+    const pulsePoints = [];
+    chartRows.forEach((row, index) => {
+      const enrolledCount = Number(row.enrollment_count);
+      const attendanceCount = Number(row.attendance_count);
+      const attendanceRate = enrolledCount > 0 ? (attendanceCount / enrolledCount) * 100 : NaN;
+      const pulse = Number(row.engagement_score);
+      const x = xAt(index);
+      if (Number.isFinite(attendanceRate)) attendancePoints.push({ x, y: yAt(attendanceRate), row, value: Math.round(attendanceRate), kind: "attendance" });
+      if (row.engagement_score !== null && row.engagement_score !== undefined && row.engagement_score !== "" && Number.isFinite(pulse)) pulsePoints.push({ x, y: yAt(pulse), row, value: Math.round(pulse), kind: "pulse" });
+    });
+    for (const [points, pathClass, pointClass, label] of [[attendancePoints, "chart-attendance-line", "chart-point-attendance", "Attendance"], [pulsePoints, "chart-pulse-line", "chart-point-pulse", "Pulse"]]) {
+      if (!points.length) continue;
+      const path = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+      svg.append(svgElement("path", { d: path, class: pathClass }));
+      for (const point of points) {
+        const time = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(point.row.started_at));
+        const circle = svgElement("circle", { cx: point.x, cy: point.y, r: 5, class: pointClass });
+        circle.append(svgElement("title", {}, `${label}: ${point.value}${label === "Attendance" ? "%" : "/100"} · ${time} · ${point.row.class_name || "Class session"}`));
+        svg.append(circle);
+      }
+    }
+    const labelCount = Math.min(5, chartRows.length);
+    for (let tick = 0; tick < labelCount; tick += 1) {
+      const index = labelCount === 1 ? 0 : Math.round((tick / (labelCount - 1)) * (chartRows.length - 1));
+      const date = new Date(chartRows[index].started_at);
+      const text = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric" }).format(date);
+      svg.append(svgElement("text", { x: xAt(index), y: 235, "text-anchor": "middle", class: "chart-axis-label" }, text));
+    }
+    frame.append(svg);
+  }
+
+  function renderMonthlyTable(rows) {
+    const tbody = $("monthly-session-rows");
+    tbody.replaceChildren();
+    if (!rows.length) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td"); td.colSpan = 6; td.className = "table-empty"; td.textContent = "No sessions in this month yet.";
+      tr.append(td); tbody.append(tr); return;
+    }
+    for (const row of [...rows].reverse()) {
+      const tr = document.createElement("tr");
+      const date = new Date(row.started_at);
+      const cells = [
+        new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(date),
+        row.class_name || "Class session",
+        `${Number(row.attendance_count || 0)} / ${Number(row.enrollment_count || 0)}`,
+        Number(row.enrollment_count) > 0 ? `${Math.round((Number(row.attendance_count || 0) / Number(row.enrollment_count)) * 100)}%` : "—",
+        row.engagement_score !== null && row.engagement_score !== undefined && row.engagement_score !== "" && Number.isFinite(Number(row.engagement_score)) ? String(Math.round(Number(row.engagement_score))) : "—",
+        String(Number(row.participation_count || 0)),
+      ];
+      for (const text of cells) { const td = document.createElement("td"); td.textContent = text; tr.append(td); }
+      tbody.append(tr);
+    }
+  }
+
+  function exportMonthlyCsv() {
+    const rows = [...selectedMonthRows()].reverse();
+    if (!rows.length) return;
+    const headers = ["Date and time (local)", "Class", "Enrolled", "Present", "Attendance rate (%)", "Engagement pulse", "Participation contributions"];
+    const values = rows.map((row) => {
+      const enrollment = Number(row.enrollment_count || 0);
+      const present = Number(row.attendance_count || 0);
+      const score = row.engagement_score === null || row.engagement_score === undefined ? "" : row.engagement_score;
+      return [new Date(row.started_at).toLocaleString(), row.class_name || "Class session", enrollment, present, enrollment ? Math.round((present / enrollment) * 100) : "", score, Number(row.participation_count || 0)];
+    });
+    const csv = [headers, ...values].map((line) => line.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = `classpulse-${$("analytics-month").value}.csv`;
+    document.body.append(anchor); anchor.click(); anchor.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   function estimatePulse(enrollment, attendance, participation) {
@@ -336,11 +506,12 @@
     event.preventDefault();
     message("session-message", "");
     const className = $("class-name").value.trim();
+    const sessionDate = new Date($("session-datetime").value);
     const enrollment = Number($("enrollment").value);
     const attendance = Number($("attendance").value);
     const participation = Number($("participation").value || 0);
-    if (!className || enrollment < 1 || attendance < 0 || attendance > enrollment || participation < 0) {
-      message("session-message", "Check the class label and totals. Present learners cannot exceed enrollment.", true);
+    if (!className || !Number.isFinite(sessionDate.getTime()) || enrollment < 1 || attendance < 0 || attendance > enrollment || participation < 0) {
+      message("session-message", "Check the class label, date, and totals. Present learners cannot exceed enrollment.", true);
       return;
     }
     const score = estimatePulse(enrollment, attendance, participation);
@@ -350,7 +521,7 @@
     const body = {
       owner_id: view.user.id,
       class_name: className,
-      started_at: new Date().toISOString(),
+      started_at: sessionDate.toISOString(),
       enrollment_count: enrollment,
       attendance_count: attendance,
       engagement_score: score,
@@ -369,7 +540,7 @@
         },
         body: JSON.stringify(body),
       });
-      $("session-form").reset(); $("participation").value = "0"; updatePreview();
+      $("session-form").reset(); $("session-datetime").value = localDateTimeValue(); $("participation").value = "0"; updatePreview();
       message("session-message", "Summary saved. Only group totals were sent to your protected Supabase table.");
       await loadSessions();
     } catch (error) {
@@ -380,6 +551,16 @@
   }
 
   async function initialize() {
+    let savedTheme = "dark";
+    try { savedTheme = localStorage.getItem("classpulse-theme") || "dark"; } catch { /* Use the dark reference theme. */ }
+    applyTheme(savedTheme);
+    $("theme-toggle").addEventListener("click", () => {
+      applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+    });
+    $("analytics-month").value = localMonthKey(new Date());
+    $("analytics-month").addEventListener("change", renderMonthlyAnalytics);
+    $("export-month").addEventListener("click", exportMonthlyCsv);
+    $("session-datetime").value = localDateTimeValue();
     $("signin-tab").addEventListener("click", () => setMode("signin"));
     $("signup-tab").addEventListener("click", () => setMode("signup"));
     $("auth-form").addEventListener("submit", authenticate);

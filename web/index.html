@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -20,6 +20,7 @@
       </a>
       <div class="topbar-right">
         <span class="secure-pill"><span class="status-dot"></span> Private workspace</span>
+        <button class="button button-quiet theme-toggle" id="theme-toggle" type="button" aria-pressed="true" aria-label="Switch to light mode">☼ Light mode</button>
         <button class="button button-quiet hidden" id="logout-button" type="button">Sign out</button>
       </div>
     </header>
@@ -81,8 +82,8 @@
             <div class="camera-controls">
               <label class="sr-only" for="camera-facing">Camera direction</label>
               <select id="camera-facing" aria-label="Camera direction">
+                <option value="environment" selected>Rear camera · classroom</option>
                 <option value="user">Front camera</option>
-                <option value="environment">Rear camera</option>
               </select>
               <button class="button button-primary" id="camera-start" type="button">Start camera &amp; count</button>
               <button class="button button-quiet" id="camera-count-toggle" type="button" disabled>Pause auto count</button>
@@ -92,12 +93,13 @@
             <p class="face-count-readout" id="face-count-readout" aria-live="off">No camera estimate yet · enter manually.</p>
             <div class="camera-stage" id="camera-stage">
               <video id="camera-video" autoplay playsinline muted aria-label="Live camera preview"></video>
-              <div class="camera-placeholder" id="camera-placeholder"><span class="camera-lens" aria-hidden="true">◎</span><span>Live preview is off</span><small>Press Start when you’re ready to view your camera.</small></div>
+              <div class="camera-placeholder" id="camera-placeholder"><span class="camera-lens" aria-hidden="true">◎</span><span>Camera is off</span><small>Start the camera to estimate visible faces, or enter attendance manually.</small></div>
             </div>
             <p class="camera-privacy-note"><span aria-hidden="true">⌑</span> On-device estimate of visible faces only. It can miss or double-count people and is not verified attendance. Decline camera access to enter the count manually.</p>
           </section>
           <form id="session-form" class="session-form">
             <div class="form-field full-width"><label for="class-name">Class or subject label</label><input id="class-name" name="className" type="text" placeholder="e.g. Biology · Period 2" minlength="1" maxlength="120" required></div>
+            <div class="form-field full-width"><label for="session-datetime">Session date and time <span class="field-hint">Your local time</span></label><input id="session-datetime" name="sessionDateTime" type="datetime-local" required></div>
             <div class="form-field"><label for="enrollment">Learners enrolled</label><input id="enrollment" name="enrollment" type="number" min="1" max="1000" placeholder="28" required></div>
             <div class="form-field"><label for="attendance">Present today <span class="field-hint">Approximate count · editable</span></label><input id="attendance" name="attendance" type="number" min="0" max="1000" placeholder="Enter manually or use camera estimate" required></div>
             <div class="form-field full-width"><div class="label-row"><label for="participation">Participation contributions</label><span class="field-hint">Group total</span></div><input id="participation" name="participation" type="number" min="0" max="10000" placeholder="18" value="0" aria-describedby="participation-help" required><small class="form-help" id="participation-help">Count class contributions such as questions, answers, and discussion comments. This is a teacher-entered group estimate.</small></div>
@@ -108,7 +110,25 @@
         </section>
 
         <section class="panel recent-panel" aria-labelledby="recent-title">
-          <div class="panel-heading"><div><span class="section-label">RECENT ACTIVITY</span><h2 id="recent-title">Your sessions</h2></div><span class="recent-count" id="recent-count">0 saved</span></div>
+          <div class="panel-heading analytics-heading"><div><span class="section-label">MONTHLY ANALYTICS</span><h2 id="recent-title">Attendance at a glance</h2></div><label class="sr-only" for="analytics-month">Choose analytics month</label><input class="month-picker" id="analytics-month" type="month"></div>
+          <p class="analytics-subtitle" id="analytics-month-label">Monthly view · all saved sessions</p>
+          <div class="monthly-metrics" aria-label="Selected month summary">
+            <article class="monthly-metric"><span>Sessions</span><strong id="month-sessions">0</strong></article>
+            <article class="monthly-metric"><span>Attendance</span><strong id="month-attendance">—</strong></article>
+            <article class="monthly-metric"><span>Avg. pulse</span><strong id="month-pulse">—</strong></article>
+            <article class="monthly-metric"><span>Contributions</span><strong id="month-contributions">0</strong></article>
+          </div>
+          <div class="analytics-chart-heading"><strong>Session trends</strong><div class="chart-legend"><span><i class="legend-attendance"></i>Attendance</span><span><i class="legend-pulse"></i>Pulse</span></div></div>
+          <div class="chart-frame" id="analytics-chart"><div class="chart-empty">Save a session to see your monthly trend.</div></div>
+          <div class="monthly-table-wrap">
+            <table class="monthly-table">
+              <caption id="monthly-table-caption">Session details for selected month</caption>
+              <thead><tr><th scope="col">Date &amp; time</th><th scope="col">Class</th><th scope="col">Present</th><th scope="col">Rate</th><th scope="col">Pulse</th><th scope="col">Contrib.</th></tr></thead>
+              <tbody id="monthly-session-rows"><tr><td colspan="6" class="table-empty">No sessions in this month yet.</td></tr></tbody>
+            </table>
+          </div>
+          <div class="analytics-actions"><button class="button button-quiet" id="export-month" type="button" disabled>Download month CSV</button><span id="analytics-load-note">Times shown in your local timezone.</span></div>
+          <div class="recent-divider"><span class="section-label">LATEST SESSIONS</span><span class="recent-count" id="recent-count">0 saved</span></div>
           <div class="session-list" id="session-list"><div class="empty-state"><span class="empty-orbit">◌</span><strong>Your first session starts here</strong><p>Save a session summary and it will show up in this list.</p></div></div>
           <div class="privacy-card"><span class="privacy-icon">⌑</span><div><strong>Privacy, by design</strong><p>Only your account can access its group summaries. Row Level Security is active.</p></div></div>
         </section>

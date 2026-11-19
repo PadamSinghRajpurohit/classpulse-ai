@@ -35,6 +35,8 @@ The Vercel site is an installable Progressive Web App (PWA). Share the HTTPS sit
 
 After signing in, **Camera attendance estimate** offers optional live camera preview and approximate on-device face counting. The browser requests camera permission only after **Start camera & count**. The free MediaPipe face detector runs in the browser; video frames are not uploaded, recorded, or stored. Only the numeric group estimate is entered into the session form, and the instructor must review/correct it before saving. This detects visible faces, not student identities, and can miss or double-count people; declining camera permission leaves manual entry available. Stop the camera when finished. Counting requires a first-time download of the MediaPipe runtime/model from jsDelivr and Google Storage; the rest of the site continues to work with manual entry if those are unavailable.
 
+The browser dashboard includes dark and light themes (dark is the default), a month selector, an attendance and engagement trend chart, local-time session details, and monthly CSV export. Session history is fetched in pages so the dashboard can display older months as well as recent sessions.
+
 ## Optional free services
 
 - **Supabase:** Set `AUTH_BACKEND=supabase`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SYNC_ENABLED=true` in a local `.env` file or deployment secrets to enable Supabase Auth and hosted session-summary sync. Apply `supabase/schema.sql` in the Supabase SQL editor first. The app uses owner-only Row Level Security. Never add a service-role key to the app or repository. Supabase's free plan has quotas and may pause inactive projects; check the provider's current limits before deployment.
