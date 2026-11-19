@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
 # Local .env files are ignored by Git. Streamlit Cloud secrets are copied into
@@ -412,6 +413,119 @@ def _render_attendance(data: dict[str, Any]) -> None:
         st.download_button("Download confirmed attendance CSV", csv_rows.to_csv(index=False), file_name=f"attendance-{session_date.isoformat()}.csv", mime="text/csv", disabled=not marked)
     else:
         st.info("Your local roster is empty. Add students above to start manual attendance.")
+    with st.expander("Optional webcam preview · no capture or upload"):
+        st.caption("Preview only. Camera access starts after you press Start, and the stream is stopped when you stop the preview or close the page.")
+        components.html(
+            r"""
+            <!doctype html>
+            <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>
+              *{box-sizing:border-box} body{margin:0;background:#fff;color:#20243a;font:14px system-ui,-apple-system,"Segoe UI",sans-serif}
+              .wrap{border:1px solid #e9eaf2;border-radius:14px;padding:16px;background:linear-gradient(140deg,#fbfaff,#f5f6fb)}
+              .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+              select,button{font:600 13px system-ui,-apple-system,"Segoe UI",sans-serif;border-radius:9px;padding:10px 12px}
+              select{background:#fff;border:1px solid #dfe1eb;color:#353950;min-width:150px}
+              button{cursor:pointer;border:1px solid transparent}
+              #start{background:linear-gradient(115deg,#785ff6,#5b45df);color:white;box-shadow:0 5px 14px #7357f52b}
+              #stop{background:#fff;border-color:#daddea;color:#535970}
+              button:disabled{cursor:default;opacity:.48}
+              .status{margin-left:auto;color:#7c8297;font-size:12px;min-width:160px;text-align:right}
+              .status.on{color:#158669}.status.error{color:#bd4453}
+              .stage{position:relative;overflow:hidden;border-radius:11px;background:#171a2c;aspect-ratio:16/9;max-height:390px;display:flex;align-items:center;justify-content:center}
+              video{display:none;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+              .placeholder{padding:18px;text-align:center;color:#bfc4d7;font-size:13px;line-height:1.6}
+              .lens{width:36px;height:36px;border-radius:12px;background:#332b61;color:#b3a7ff;display:flex;align-items:center;justify-content:center;margin:0 auto 11px;font-size:18px}
+              .foot{margin:10px 2px 0;color:#858ba1;font-size:11px}
+              @media(max-width:520px){.wrap{padding:12px}.status{width:100%;text-align:left;margin:0}.stage{aspect-ratio:4/3;max-height:330px}.toolbar{gap:8px}select,button{flex:1}}
+            </style></head><body>
+              <div class="wrap">
+                <div class="toolbar">
+                  <select id="facing" aria-label="Choose camera">
+                    <option value="user">Front camera</option>
+                    <option value="environment">Rear camera</option>
+                  </select>
+                  <button id="start" type="button">Start preview</button>
+                  <button id="stop" type="button" disabled>Stop</button>
+                  <span id="status" class="status" role="status" aria-live="polite">Camera is off</span>
+                </div>
+                <div class="stage">
+                  <video id="preview" autoplay playsinline muted></video>
+                  <div id="placeholder" class="placeholder"><div class="lens">◎</div>Camera preview is off.<br>Press Start when you’re ready to view it.</div>
+                </div>
+                <div class="foot">Live preview stays in this browser. No frames are recorded, saved, or sent to the app.</div>
+              </div>
+              <script>
+                (() => {
+                  const video = document.getElementById('preview');
+                  const startButton = document.getElementById('start');
+                  const stopButton = document.getElementById('stop');
+                  const status = document.getElementById('status');
+                  const placeholder = document.getElementById('placeholder');
+                  const facing = document.getElementById('facing');
+                  let stream = null;
+                  function setStatus(message, state='') {
+                    status.textContent = message;
+                    status.className = `status ${state}`.trim();
+                  }
+                  function stopPreview(message='Camera is off') {
+                    if (stream) {
+                      stream.getTracks().forEach(track => track.stop());
+                      stream = null;
+                    }
+                    video.pause();
+                    video.srcObject = null;
+                    video.style.display = 'none';
+                    placeholder.style.display = 'block';
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    setStatus(message);
+                  }
+                  async function startPreview() {
+                    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+                      setStatus('Use localhost or HTTPS to preview camera', 'error');
+                      return;
+                    }
+                    startButton.disabled = true;
+                    setStatus('Waiting for camera permission…');
+                    try {
+                      // This is the only getUserMedia call, and it runs only from this click handler.
+                      stream = await navigator.mediaDevices.getUserMedia({
+                        audio: false,
+                        video: {
+                          facingMode: { ideal: facing.value },
+                          width: { ideal: 1280 },
+                          height: { ideal: 720 }
+                        }
+                      });
+                      video.srcObject = stream;
+                      video.style.transform = facing.value === 'user' ? 'scaleX(-1)' : 'none';
+                      await video.play();
+                      placeholder.style.display = 'none';
+                      video.style.display = 'block';
+                      stopButton.disabled = false;
+                      startButton.disabled = false;
+                      setStatus('Live preview · camera on', 'on');
+                    } catch (error) {
+                      stopPreview(error?.name === 'NotAllowedError'
+                        ? 'Camera permission was not granted'
+                        : 'Camera unavailable · check device and browser settings');
+                      status.className = 'status error';
+                    }
+                  }
+                  startButton.addEventListener('click', startPreview);
+                  stopButton.addEventListener('click', () => stopPreview());
+                  window.addEventListener('pagehide', () => stopPreview());
+                  window.addEventListener('beforeunload', () => stopPreview());
+                  document.addEventListener('visibilitychange', () => {
+                    if (document.hidden && stream) stopPreview('Preview stopped while page was hidden');
+                  });
+                })();
+              </script>
+            </body></html>
+            """,
+            height=500,
+            scrolling=False,
+        )
     with st.expander("Optional: analyze a classroom image"):
         st.caption("This is opt-in and uses a still image only. Local vision estimates visible faces; it does not recognize identities or mark attendance automatically.")
         image = st.file_uploader("Choose an image", type=["jpg", "jpeg", "png", "webp"], key="attendance_image")

@@ -29,6 +29,12 @@ The local Streamlit interface uses a persistent process and local SQLite, which 
 
 The Vercel runtime uses the standard-library-only `requirements.txt`; install the richer local Streamlit dependencies from `requirements-streamlit.txt`.
 
+### Install ClassPulse on a phone
+
+The Vercel site is an installable Progressive Web App (PWA). Share the HTTPS site link with a phone. On Android, use **Install app** (or the browser menu's **Install app / Add to Home screen**). On iPhone or iPad, open the link in Safari, tap **Share**, then **Add to Home Screen**. This installs a home-screen web app; it does not create an APK or an App Store package. After the first visit, the public app shell can open offline, while sign-in and Supabase data still require internet.
+
+After signing in, **Check your camera framing** offers an optional video-only preview. The browser requests camera permission only after **Start preview**. The preview stays in the browser and is stopped when the user stops it, signs out, switches away, or leaves the page. It does not record, upload, analyze, or store video. The hosted dashboard does not run computer vision on the live camera; the separate local Python media pipeline can analyze a user-selected still image or video file.
+
 ## Optional free services
 
 - **Supabase:** Set `AUTH_BACKEND=supabase`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SYNC_ENABLED=true` in a local `.env` file or deployment secrets to enable Supabase Auth and hosted session-summary sync. Apply `supabase/schema.sql` in the Supabase SQL editor first. The app uses owner-only Row Level Security. Never add a service-role key to the app or repository. Supabase's free plan has quotas and may pause inactive projects; check the provider's current limits before deployment.

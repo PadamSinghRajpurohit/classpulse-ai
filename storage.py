@@ -269,7 +269,7 @@ def list_attendance(
 
 
 def delete_student(owner_id: int | str, student_id: int) -> bool:
-    """Remove one roster entry owned by this user and its local attendance rows."""
+    """Remove one local roster entry owned by this user and its attendance rows."""
     with _connect() as db:
         cursor = db.execute("DELETE FROM students WHERE owner_id = ? AND id = ?", (str(owner_id), int(student_id)))
         return cursor.rowcount > 0
