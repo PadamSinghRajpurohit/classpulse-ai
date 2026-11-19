@@ -2,7 +2,7 @@
 
 (() => {
   const $ = (id) => document.getElementById(id);
-  const view = { config: null, user: null, accessToken: null, mode: "signin", sessions: [] };
+  const view = { config: null, user: null, accessToken: null, mode: "signin", sessions: [], monthChosen: false };
   const MEDIAPIPE_VERSION = "1.2.3";
   const MEDIAPIPE_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}`;
   const FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/latest/blaze_face_full_range.tflite";
@@ -272,6 +272,7 @@
     view.user = null;
     view.accessToken = null;
     view.sessions = [];
+    view.monthChosen = false;
     $("dashboard-view").classList.add("hidden");
     $("auth-view").classList.remove("hidden");
     $("logout-button").classList.add("hidden");
@@ -302,6 +303,15 @@
         if (page.length < pageSize) break;
       }
       view.sessions = rows;
+      const monthInput = $("analytics-month");
+      const selectedMonthHasData = rows.some((row) => {
+        const date = new Date(row.started_at || "");
+        return Number.isFinite(date.getTime()) && localMonthKey(date) === monthInput.value;
+      });
+      if (!view.monthChosen && rows.length && !selectedMonthHasData) {
+        const newestDate = new Date(rows[0].started_at || "");
+        if (Number.isFinite(newestDate.getTime())) monthInput.value = localMonthKey(newestDate);
+      }
       renderSessions();
       loadNote.textContent = rows.length
         ? `${rows.length} saved session${rows.length === 1 ? "" : "s"} · times shown in your local timezone`
@@ -572,7 +582,10 @@
       applyTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
     });
     $("analytics-month").value = localMonthKey(new Date());
-    $("analytics-month").addEventListener("change", renderMonthlyAnalytics);
+    $("analytics-month").addEventListener("change", () => {
+      view.monthChosen = true;
+      renderMonthlyAnalytics();
+    });
     $("export-month").addEventListener("click", exportMonthlyCsv);
     $("session-datetime").value = localDateTimeValue();
     $("signin-tab").addEventListener("click", () => setMode("signin"));
