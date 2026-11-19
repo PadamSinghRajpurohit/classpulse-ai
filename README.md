@@ -34,7 +34,7 @@ The Vercel runtime uses the standard-library-only `requirements.txt`; install th
 - **Supabase:** Set `AUTH_BACKEND=supabase`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SYNC_ENABLED=true` in a local `.env` file or deployment secrets to enable Supabase Auth and hosted session-summary sync. Apply `supabase/schema.sql` in the Supabase SQL editor first. The app uses owner-only Row Level Security. Never add a service-role key to the app or repository. Supabase's free plan has quotas and may pause inactive projects; check the provider's current limits before deployment.
 - **Gemini:** Set `GEMINI_API_KEY` only if you choose to use optional summaries. The local rules work without it. Raw audio/video, frames, faces, and student identifiers must not be sent to Gemini. Only de-identified aggregate session metrics may be sent, and only after the user explicitly enables that action.
 
-Copy `.env.example` to `.env` for local configuration. The `supabase` Python package is included in `requirements.txt`; local SQLite remains the default until Supabase credentials and sync are enabled. `.env` and Streamlit secrets are excluded from Git. GitHub should contain placeholders and setup instructions only, never live API keys.
+Copy `.env.example` to `.env` for local configuration. The `supabase` Python package is included in `requirements-streamlit.txt`; local SQLite remains the default until Supabase credentials and sync are enabled. `.env` and Streamlit secrets are excluded from Git. GitHub should contain placeholders and setup instructions only, never live API keys.
 
 ## Privacy and security defaults
 
