@@ -1,4 +1,4 @@
-streamlit>=1.38,<2.0
+streamlit>=1.40,<2.0
 pandas>=2.2,<4.0
 plotly>=5.20,<7.0
 python-dotenv>=1.0,<2.0
@@ -6,6 +6,8 @@ pillow>=10.0,<13.0
 opencv-python-headless>=4.9,<5.0
 numpy>=1.26,<3.0
 librosa>=0.10,<1.0
+mediapipe>=1.2.3,<2.0
+webrtcvad-wheels>=2.0.14.post1,<3.0
 supabase>=2.0,<3.0
 
 # Gemini uses the Python standard library; only aggregate metrics are sent.

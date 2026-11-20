@@ -1,7 +1,7 @@
 """ClassPulse AI - Streamlit front end for multimodal attendance and engagement."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from html import escape
 from io import BytesIO
 import os
@@ -552,10 +552,10 @@ def _render_attendance(data: dict[str, Any]) -> None:
 def _render_session() -> None:
     st.markdown('<div class="page-kicker">MULTIMODAL ANALYSIS</div>', unsafe_allow_html=True)
     st.title("Session analysis")
-    st.markdown("Upload an existing recording when you’re ready. Nothing is captured automatically.")
+    st.markdown("Choose an existing recording or explicitly record a short audio clip. Nothing is captured automatically.")
     with st.container(border=True):
         st.subheader("Choose session media")
-        st.caption("The local pipeline can combine visual cues and audio features. Use consented classroom recordings only.")
+        st.caption("The Python pipeline estimates group-level visual cues and broad audio activity; it does not identify people. Media is processed temporarily by this app server and is not retained in project storage or the database. A hosted deployment processes media on its host; run this app locally if recordings must stay on the instructor’s device.")
         session_label = st.text_input(
             "Class / session name",
             value="Class session",
@@ -563,10 +563,71 @@ def _render_session() -> None:
             help="Use the same class name shown on Attendance if you want to attach its manual present/absent counts.",
         )
         session_date = st.date_input("Session date", value=date.today(), key="analysis_session_date")
-        video = st.file_uploader("Video recording (optional)", type=["mp4", "mov", "avi", "mkv"], key="session_video")
-        audio = st.file_uploader("Audio recording (optional)", type=["wav", "mp3", "m4a", "ogg", "flac"], key="session_audio")
+        local_now = datetime.now().astimezone()
+        session_start_time = st.time_input(
+            "Session start time (local app timezone)",
+            value=local_now.time().replace(second=0, microsecond=0, tzinfo=None),
+            key="analysis_session_start_time",
+        )
+        st.caption(
+            f"The selected date and time are assumed to use this app’s local timezone ({local_now.tzname() or 'local time'}). "
+            "On a hosted deployment, that is the server’s timezone. Saved timestamps are converted to UTC."
+        )
+        st.caption(
+            "Optional head-orientation proxy: if enabled, the first video analysis may download the pinned MediaPipe model "
+            "(up to 32 MiB) from Google's official model host; after caching, inference runs locally on this app server. "
+            "MediaPipe may send performance and utilization metrics to Google, but video/audio content stays on this server "
+            "and is not sent to Google. If the model is unavailable, head orientation is omitted and other estimates continue."
+        )
+        media_consent = st.checkbox(
+            "I am authorized to analyze this media and have consent from everyone represented.",
+            key="session_media_consent",
+            help="Media is processed temporarily for non-identifying, group-level estimates. Raw media is not saved to the database.",
+        )
+        video = None
+        audio = None
+        include_head_orientation = False
+        if media_consent:
+            video = st.file_uploader(
+                "Video recording (optional)",
+                type=["mp4", "mov", "avi", "mkv"],
+                key="session_video",
+            )
+            if video:
+                include_head_orientation = st.checkbox(
+                    "Enable optional MediaPipe head-orientation proxy",
+                    value=False,
+                    key="session_head_orientation_opt_in",
+                    help="Off by default. Provides a camera-relative head-angle proxy, not gaze or attention. See the model and Google metrics notice above.",
+                )
+            audio_source = st.radio(
+                "Audio source (choose one)",
+                ["No audio", "Upload an audio file", "Record with microphone"],
+                horizontal=True,
+                key="session_audio_source",
+                help="Upload and microphone recording are alternatives. Video remains optional.",
+            )
+            if audio_source == "Upload an audio file":
+                audio = st.file_uploader(
+                    "Choose an audio file",
+                    type=["wav", "mp3", "m4a", "ogg", "flac"],
+                    key="session_audio_upload",
+                )
+            elif audio_source == "Record with microphone":
+                if callable(getattr(st, "audio_input", None)):
+                    st.caption("Recording starts only when you press Record. The clip is temporarily sent to this app server for analysis; raw audio is not retained or sent to Gemini.")
+                    audio = st.audio_input(
+                        "Record a short audio clip",
+                        sample_rate=16000,
+                        key="session_microphone_audio",
+                        help="Press Record to grant microphone access, then stop when the clip is complete.",
+                    )
+                else:
+                    st.error("Microphone recording needs Streamlit 1.40 or newer. Update Streamlit, or choose the upload option instead.")
+        else:
+            st.info("Confirm authorization and participant consent above before selecting a video/audio file or enabling the microphone.")
         if video or audio:
-            st.info("Media selected. Press Analyze to process it. Raw media should remain local and be removed after analysis.")
+            st.info("Media selected. Press Analyze to process it. Analysis is disabled until you confirm authorization and participant consent. Only aggregate session metrics can be saved; raw media is not retained.")
         gemini_available = bool(os.getenv("GEMINI_API_KEY"))
         use_gemini = st.checkbox(
             "Use Gemini for an optional session summary",
@@ -576,23 +637,28 @@ def _render_session() -> None:
         )
         if not gemini_available:
             st.caption("Local analysis works without an API key. Configure GEMINI_API_KEY privately to enable optional Gemini summaries.")
-        analyze = st.button("Analyze session", type="primary", disabled=not (video or audio), use_container_width=False)
+        analyze = st.button("Analyze session", type="primary", disabled=not media_consent or not (video or audio), use_container_width=False)
         if analyze:
             if ai_pipeline is None:
                 st.error("The AI pipeline is not installed yet. Add its local dependencies to enable analysis.")
             else:
                 try:
+                    local_timezone = datetime.now().astimezone().tzinfo
+                    session_started_at = datetime.combine(session_date, session_start_time).replace(tzinfo=local_timezone)
+                    session_started_at_utc = session_started_at.astimezone(timezone.utc).isoformat(timespec="seconds")
                     result = ai_pipeline.analyze_session(
                         video_file=video,
                         audio_file=audio,
                         session_label=session_label.strip() or "Class session",
                         use_gemini=use_gemini,
+                        include_head_orientation=include_head_orientation,
                     )
                     st.session_state.analysis_result = result
                     st.session_state.analysis_saved = False
                     st.session_state.analysis_context = {
                         "class_name": session_label.strip() or "Class session",
                         "session_date": session_date.isoformat(),
+                        "started_at": session_started_at_utc,
                     }
                 except Exception:
                     st.error("Analysis failed. Check that the optional local AI dependencies are installed and the media format is supported.")
@@ -600,28 +666,138 @@ def _render_session() -> None:
     if result:
         st.subheader("Session summary")
         if isinstance(result, dict):
-            m1, m2, m3 = st.columns(3)
             score = result.get("engagement_score")
             audio_signals = result.get("audio_signals", {}) or {}
-            with m1: _metric_card("ENGAGEMENT ESTIMATE", str(score if score is not None else "—"), str(result.get("engagement_confidence", "Group-level signal")))
-            with m2: _metric_card("AUDIO ACTIVITY", f"{audio_signals.get('speech_activity_pct')}%" if audio_signals.get("speech_activity_pct") is not None else "—", "Broad sound activity only", "mint")
-            with m3: _metric_card("SIGNAL QUALITY", str(result.get("signal_quality", "unavailable")).title(), "Interpret with care", "blue")
+            video_signals = result.get("video_signals", {}) or {}
+
+            def metric_value(value: Any, suffix: str = "", precision: int = 0) -> str:
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    return "Unavailable"
+                number = f"{value:.{precision}f}" if precision else f"{int(round(value))}"
+                return f"{number}{suffix}"
+
+            confidence = str(result.get("engagement_confidence") or "unavailable").replace("_", " ")
+            score_text = f"{int(round(score))}/100" if isinstance(score, (int, float)) and not isinstance(score, bool) else "Unavailable"
+            sound_activity = audio_signals.get("sound_activity_pct")
+            if sound_activity is None:
+                sound_activity = result.get("audio_activity_pct")
+            likely_speech = audio_signals.get("likely_speech_activity_pct")
+            if likely_speech is None:
+                likely_speech = result.get("likely_speech_activity_pct")
+            summary_columns = st.columns(4)
+            with summary_columns[0]:
+                _metric_card("FUSED GROUP ACTIVITY ESTIMATE", score_text, f"Unvalidated, low-confidence heuristic · {confidence}; not attention or performance", "violet")
+            with summary_columns[1]:
+                _metric_card("SOUND ACTIVITY", metric_value(sound_activity, "%"), "Broad sound-energy proxy; not a speech detector", "mint")
+            with summary_columns[2]:
+                speech_method = str(audio_signals.get("speech_activity_method") or "unavailable").replace("_", " ")
+                _metric_card("LIKELY-SPEECH ACTIVITY", metric_value(likely_speech, "%"), f"Optional local VAD estimate · {speech_method}; no transcript or speaker ID", "amber")
+            with summary_columns[3]:
+                _metric_card("SIGNAL QUALITY", str(result.get("signal_quality", "unavailable")).title(), "Interpret group proxies cautiously", "blue")
+            st.caption(result.get("fused_score_method", "This unvalidated group activity estimate is advisory and should be checked against classroom context."))
             if result.get("ai_summary"):
                 st.markdown(f"**Optional AI summary:** {result['ai_summary']}")
             st.caption(result.get("privacy_note", "Analysis complete. Review the observations below."))
-            left, right = st.columns(2)
-            with left:
-                video_signals = result.get("video_signals", {}) or {}
-                st.markdown("**Visual signal**")
-                st.write(video_signals.get("note", "No video analysis was available."))
-                if video_signals.get("peak_visible_faces") is not None:
-                    st.caption(f"Peak visible-face estimate: {video_signals['peak_visible_faces']} · not an identity count")
-            with right:
-                st.markdown("**Audio signal**")
-                st.write(audio_signals.get("note", "No audio analysis was available."))
-            st.markdown("**Suggestions for review**")
-            for item in result.get("suggestions", []):
-                st.markdown(f"- {item}")
+
+            st.markdown("### Visual group proxies")
+            visual_columns = st.columns(4)
+            with visual_columns[0]:
+                _metric_card(
+                    "PEAK VISIBLE-FACE ESTIMATE",
+                    metric_value(video_signals.get("peak_visible_faces")),
+                    "Sampled-frame count only; it does not identify or verify students",
+                    "violet",
+                )
+            with visual_columns[1]:
+                tracking_available = bool(video_signals.get("anonymous_face_tracker_available"))
+                track_count = video_signals.get("sustained_visible_face_track_count")
+                track_value = f"{metric_value(track_count)} tracks" if tracking_available and isinstance(track_count, (int, float)) and not isinstance(track_count, bool) else "Unavailable"
+                track_details = []
+                if tracking_available:
+                    longest = video_signals.get("longest_visible_face_track_seconds")
+                    coverage = video_signals.get("tracked_face_presence_pct")
+                    if longest is not None:
+                        track_details.append(f"longest {metric_value(longest, ' s', 1)}")
+                    if coverage is not None:
+                        track_details.append(f"clip coverage {metric_value(coverage, '%')}")
+                    track_details.append("ephemeral box matches, not face IDs")
+                else:
+                    track_details.append(video_signals.get("face_tracking_note", "Reliable sustained tracking was unavailable."))
+                _metric_card("SUSTAINED VISIBLE-FACE TRACK ESTIMATE", track_value, " · ".join(track_details), "mint")
+            with visual_columns[2]:
+                orientation_available = bool(video_signals.get("head_orientation_available"))
+                orientation_value = metric_value(video_signals.get("head_orientation_proxy_pct"), "% camera-relative centered") if orientation_available else "Unavailable"
+                orientation_note = video_signals.get("head_orientation_note", "Optional model output was unavailable.")
+                _metric_card("HEAD-ORIENTATION PROXY", orientation_value, f"{orientation_note} Not gaze or attention.", "amber")
+            with visual_columns[3]:
+                motion = video_signals.get("group_motion_activity_pct", result.get("group_motion_activity_pct"))
+                _metric_card("GROUP SCENE-MOTION PROXY", metric_value(motion, "%"), "Frame changes may reflect camera shake, lighting, or lesson content; not inactivity", "blue")
+            if video_signals.get("note"):
+                st.caption(video_signals["note"])
+            if audio_signals.get("note"):
+                st.caption(audio_signals["note"])
+
+            st.markdown("### Multimodal signals across clip progress")
+            st.caption("Signals are aligned by relative progress through each clip, not verified clock-time synchronization. Each line is a coarse group proxy, not individual behavior.")
+            windows = result.get("multimodal_time_windows") or []
+            chart_rows = []
+            chart_series = (
+                ("Visible-face presence proxy", "visible_presence_pct"),
+                ("Group scene-motion proxy", "frame_motion_level_pct"),
+                ("Sound activity", "sound_activity_pct"),
+                ("Likely-speech activity", "likely_speech_activity_pct"),
+                ("Camera-relative head-orientation proxy", "head_orientation_camera_relative_centered_pct"),
+            )
+            if isinstance(windows, list):
+                for window in windows:
+                    if not isinstance(window, dict):
+                        continue
+                    start_pct = window.get("relative_start_pct")
+                    end_pct = window.get("relative_end_pct")
+                    if not isinstance(start_pct, (int, float)) or not isinstance(end_pct, (int, float)):
+                        continue
+                    row = {"Clip progress": f"{start_pct:g}–{end_pct:g}%"}
+                    for label, key in chart_series:
+                        value = window.get(key)
+                        row[label] = value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+                    if any(row[label] is not None for label, _ in chart_series):
+                        chart_rows.append(row)
+            if chart_rows:
+                chart_data = pd.DataFrame(chart_rows).set_index("Clip progress")
+                available_series = [label for label, _ in chart_series if chart_data[label].notna().any()]
+                if available_series:
+                    st.line_chart(chart_data[available_series], height=270)
+                else:
+                    st.info("No numeric multimodal signals were available for this clip.")
+            else:
+                st.info("Relative-progress multimodal windows are unavailable for this session.")
+
+            agent = result.get("suggestion_agent") if isinstance(result.get("suggestion_agent"), dict) else {}
+            with st.container(border=True):
+                st.markdown("### Instructor prompts · bounded-rule agent")
+                if agent.get("mode") == "offline_bounded_rule_agent":
+                    st.caption("This offline, bounded-rule agent checks aggregate signal quality, selects from fixed instructor prompts, and applies a safety review. It does not identify learners or take action; suggestions are optional and require instructor judgment.")
+                else:
+                    st.caption("The bounded-rule agent was unavailable; these local fallback prompts remain advisory and require instructor judgment. No learner is identified and no action is taken automatically.")
+                tools_used = agent.get("tools_used") or []
+                if tools_used:
+                    st.caption("Tools used: " + " → ".join(str(tool) for tool in tools_used))
+                if agent.get("review_note"):
+                    st.caption(agent["review_note"])
+                structured_suggestions = agent.get("suggestions") or []
+                if structured_suggestions:
+                    for item in structured_suggestions:
+                        if isinstance(item, dict):
+                            title = str(item.get("title") or "Teaching prompt")
+                            detail = str(item.get("detail") or "Review this group signal in context.")
+                            st.markdown(f"- **{title}:** {detail}")
+                else:
+                    fallback_suggestions = result.get("suggestions") or []
+                    if fallback_suggestions:
+                        for item in fallback_suggestions:
+                            st.markdown(f"- {item}")
+                    else:
+                        st.info("No instructor prompts were available for this session.")
             errors = result.get("errors", [])
             if errors:
                 for issue in errors:
@@ -669,7 +845,7 @@ def _render_session() -> None:
                         engagement_score=float(engagement_value) if isinstance(engagement_value, (int, float)) else None,
                         participation_count=0,
                         summary=summary,
-                        started_at=f"{context.get('session_date', date.today().isoformat())}T00:00:00+00:00",
+                        started_at=context.get("started_at") or datetime.now(timezone.utc).isoformat(timespec="seconds"),
                         access_token=getattr(user, "access_token", None),
                     )
                     st.session_state.analysis_saved = True

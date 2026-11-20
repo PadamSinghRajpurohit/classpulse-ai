@@ -78,7 +78,7 @@
               <div><span class="camera-preview-kicker">OPTIONAL · ON-DEVICE COUNT</span><h3 id="camera-preview-title">Camera attendance estimate</h3></div>
               <span class="camera-live-indicator" id="camera-live-indicator" aria-hidden="true"></span>
             </div>
-            <p class="camera-preview-copy">Press Start camera &amp; count to allow the camera and estimate visible faces on this device. It cannot identify students. Nothing is recorded or uploaded; review and correct the estimate before saving.</p>
+            <p class="camera-preview-copy">Press Start camera &amp; count to allow the camera and estimate visible faces on this device. It cannot identify students. Video frames are not recorded, uploaded, or sent to Google; review and correct the estimate before saving.</p>
             <div class="camera-controls">
               <label class="sr-only" for="camera-facing">Camera direction</label>
               <select id="camera-facing" aria-label="Camera direction">
@@ -95,7 +95,7 @@
               <video id="camera-video" autoplay playsinline muted aria-label="Live camera preview"></video>
               <div class="camera-placeholder" id="camera-placeholder"><span class="camera-lens" aria-hidden="true">◎</span><span>Camera is off</span><small>Start the camera to estimate visible faces, or enter attendance manually.</small></div>
             </div>
-            <p class="camera-privacy-note"><span aria-hidden="true">⌑</span> On-device estimate of visible faces only. It can miss or double-count people and is not verified attendance. Decline camera access to enter the count manually.</p>
+            <p class="camera-privacy-note"><span aria-hidden="true">⌑</span> On-device estimate of visible faces only. It can miss or double-count people and is not verified attendance. The MediaPipe library may send performance/utilization metrics to Google; camera frames are not sent. Decline camera access to enter the count manually.</p>
           </section>
           <form id="session-form" class="session-form">
             <div class="form-field full-width"><label for="class-name">Class or subject label</label><input id="class-name" name="className" type="text" placeholder="e.g. Biology · Period 2" minlength="1" maxlength="120" required></div>
