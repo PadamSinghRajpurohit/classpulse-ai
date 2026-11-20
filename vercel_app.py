@@ -103,7 +103,7 @@ def application(environ: dict, start_response: StartResponse) -> list[bytes]:
     response_headers = [
         ("Content-Type", content_type),
         ("Content-Length", str(len(body))),
-        ("Cache-Control", "no-cache" if path in {"/", "/index.html", "/service-worker.js", "/manifest.webmanifest"} else "public, max-age=300"),
+        ("Cache-Control", "no-cache" if path in {"/", "/index.html", "/service-worker.js", "/manifest.webmanifest", "/assets/app.js", "/assets/styles.css"} else "public, max-age=300"),
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ("X-Frame-Options", "DENY"),
