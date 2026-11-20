@@ -15,8 +15,8 @@
   const installButton = document.createElement("button");
   installButton.type = "button";
   installButton.className = "button button-quiet pwa-install hidden";
-  installButton.textContent = "Install app";
-  installButton.setAttribute("aria-label", "Install ClassPulse on this device");
+  installButton.textContent = "Add to phone";
+  installButton.setAttribute("aria-label", "Add the ClassPulse web app to this device");
 
   const container = document.querySelector(".topbar-right");
   if (!container) return;
@@ -38,8 +38,8 @@
   installButton.addEventListener("click", async () => {
     if (!installPrompt) {
       const instructions = isAppleTouch
-        ? "To install ClassPulse on iPhone or iPad, open the Share menu and choose Add to Home Screen."
-        : "Open your browser menu and choose Install app or Add to Home Screen if that option is available.";
+        ? "To add ClassPulse on iPhone or iPad, open the Share menu and choose Add to Home Screen. This creates a browser-based web app; it does not download an APK."
+        : "Open your browser menu and choose Install app or Add to Home screen. This adds the browser-based ClassPulse web app; it does not download an APK.";
       window.alert(instructions);
       return;
     }

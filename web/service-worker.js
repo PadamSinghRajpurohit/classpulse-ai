@@ -1,6 +1,6 @@
 /* Cache only the public app shell. Authentication, API config, Supabase REST
    calls, and all other dynamic requests always go directly to the network. */
-const CACHE_NAME = "classpulse-shell-v4";
+const CACHE_NAME = "classpulse-shell-v5";
 const APP_SHELL = [
   "/",
   "/assets/styles.css",
@@ -12,6 +12,7 @@ const APP_SHELL = [
   "/assets/icon-512.png",
   "/assets/icon-maskable-512.png"
 ];
+const APP_SHELL_PATHS = new Set(APP_SHELL);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -59,6 +60,10 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
+
+  // Only cache files explicitly listed in the public app shell. Do not cache
+  // arbitrary same-origin responses such as configuration or future API routes.
+  if (!APP_SHELL_PATHS.has(url.pathname)) return;
 
   event.respondWith(
     caches.match(request).then((cached) => {
