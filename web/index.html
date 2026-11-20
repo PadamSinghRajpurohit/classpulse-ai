@@ -54,6 +54,8 @@
           <button class="button button-primary button-full" id="auth-submit" type="submit">Sign in <span aria-hidden="true">→</span></button>
         </form>
         <p class="message" id="auth-message" role="status" aria-live="polite"></p>
+        <button class="button button-quiet button-full" id="preview-sample" type="button">Preview sample dashboard</button>
+        <p class="form-help">See the analytics layout with synthetic sample rows. No account or data sharing.</p>
         <div class="auth-foot"><span class="tiny-lock">⌑</span> Encrypted sign-in powered by Supabase Auth</div>
       </div>
     </section>
@@ -63,10 +65,15 @@
         <div><div class="eyebrow"><span class="eyebrow-line"></span> YOUR OVERVIEW</div><h1 id="dashboard-title">Good teaching leaves <span>a pulse.</span></h1><p class="hero-text">A quick read on your recent sessions. Your judgment always leads.</p></div>
         <div class="today-chip"><span class="today-dot"></span><span id="today-label">Today</span></div>
       </div>
+      <div class="privacy-card hidden" id="sample-banner" role="status">
+        <span class="privacy-icon" aria-hidden="true">ⓘ</span>
+        <div><strong>Sample-only dashboard</strong><p>Every row is synthetic. Nothing is sent to Supabase. Camera, microphone, and saving are disabled in preview mode.</p></div>
+        <button class="button button-quiet" id="exit-preview" type="button">Exit preview</button>
+      </div>
       <div class="metric-grid">
         <article class="metric-card"><div class="metric-top"><span>SESSIONS</span><span class="metric-icon icon-purple">▤</span></div><strong id="sessions-count">0</strong><small>Saved learning moments</small><div class="metric-foot"><span class="metric-line purple-line"></span> Your recent activity</div></article>
         <article class="metric-card"><div class="metric-top"><span>AVG. ATTENDANCE</span><span class="metric-icon icon-mint">◉</span></div><strong><span id="attendance-rate">—</span><i>%</i></strong><small>Across saved sessions</small><div class="metric-foot"><span class="metric-line mint-line"></span> Presence creates possibility</div></article>
-        <article class="metric-card"><div class="metric-top"><span>ENGAGEMENT PULSE</span><span class="metric-icon icon-peach">⌁</span></div><strong><span id="engagement-rate">—</span><i>/100</i></strong><small>Heuristic group estimate</small><div class="metric-foot"><span class="metric-line peach-line"></span> A signal, never a verdict</div></article>
+        <article class="metric-card"><div class="metric-top"><span>ATTENDANCE / CONTRIBUTION INDEX</span><span class="metric-icon icon-peach">⌁</span></div><strong><span id="engagement-rate">—</span><i>/100</i></strong><small>Unvalidated group heuristic · not attention</small><div class="metric-foot"><span class="metric-line peach-line"></span> A signal, never a verdict</div></article>
       </div>
 
       <div class="content-grid">
@@ -97,6 +104,21 @@
             </div>
             <p class="camera-privacy-note"><span aria-hidden="true">⌑</span> On-device estimate of visible faces only. It can miss or double-count people and is not verified attendance. The MediaPipe library may send performance/utilization metrics to Google; camera frames are not sent. Decline camera access to enter the count manually.</p>
           </section>
+          <section class="camera-preview" aria-labelledby="sound-sampler-title">
+            <div class="camera-preview-heading">
+              <div><span class="camera-preview-kicker">OPTIONAL · SOUND LEVEL ONLY</span><h3 id="sound-sampler-title">Microphone sound-activity sample</h3></div>
+              <span class="camera-live-indicator" id="audio-live-indicator" aria-hidden="true"></span>
+            </div>
+            <p class="camera-preview-copy">With consent, sample broad sound levels in this browser. No audio is recorded, uploaded, transcribed, or used to identify speakers.</p>
+            <label class="camera-privacy-note" for="audio-consent"><input id="audio-consent" type="checkbox"> I have permission to sample room audio and everyone present is aware.</label>
+            <div class="camera-controls">
+              <button class="button button-primary" id="audio-start" type="button" disabled>Start sound sampler</button>
+              <button class="button button-quiet" id="audio-stop" type="button" disabled>Stop</button>
+              <span class="camera-status" id="audio-status" role="status" aria-live="polite">Microphone is off</span>
+            </div>
+            <p class="face-count-readout" id="audio-activity-readout" aria-live="polite">No sound-activity estimate yet.</p>
+            <p class="camera-privacy-note"><span aria-hidden="true">⌑</span> Only the aggregate percentage of sampled moments above a broad sound threshold is kept in this session and may be saved as an audio summary. This is not speech, participation, or engagement measurement.</p>
+          </section>
           <form id="session-form" class="session-form">
             <div class="form-field full-width"><label for="class-name">Class or subject label</label><input id="class-name" name="className" type="text" placeholder="e.g. Biology · Period 2" minlength="1" maxlength="120" required></div>
             <div class="form-field full-width"><label for="session-datetime">Session date and time <span class="field-hint">Your local time</span></label><input id="session-datetime" name="sessionDateTime" type="datetime-local" required></div>
@@ -115,16 +137,17 @@
           <div class="monthly-metrics" aria-label="Selected month summary">
             <article class="monthly-metric"><span>Sessions</span><strong id="month-sessions">0</strong></article>
             <article class="monthly-metric"><span>Attendance</span><strong id="month-attendance">—</strong></article>
-            <article class="monthly-metric"><span>Avg. pulse</span><strong id="month-pulse">—</strong></article>
+            <article class="monthly-metric"><span>Avg. group index</span><strong id="month-pulse">—</strong></article>
             <article class="monthly-metric"><span>Contributions</span><strong id="month-contributions">0</strong></article>
+            <article class="monthly-metric"><span>Avg. sound activity</span><strong id="month-sound">—</strong></article>
           </div>
-          <div class="analytics-chart-heading"><strong>Session trends</strong><div class="chart-legend"><span><i class="legend-attendance"></i>Attendance</span><span><i class="legend-pulse"></i>Pulse</span></div></div>
+          <div class="analytics-chart-heading"><strong>Session trends</strong><div class="chart-legend"><span><i class="legend-attendance"></i>Attendance</span><span><i class="legend-pulse"></i>Group index</span><span><i class="legend-sound"></i>Sound activity</span></div></div>
           <div class="chart-frame" id="analytics-chart"><div class="chart-empty">Save a session to see your monthly trend.</div></div>
           <div class="monthly-table-wrap">
             <table class="monthly-table">
               <caption id="monthly-table-caption">Session details for selected month</caption>
-              <thead><tr><th scope="col">Date &amp; time</th><th scope="col">Class</th><th scope="col">Present</th><th scope="col">Rate</th><th scope="col">Pulse</th><th scope="col">Contrib.</th></tr></thead>
-              <tbody id="monthly-session-rows"><tr><td colspan="6" class="table-empty">No sessions in this month yet.</td></tr></tbody>
+              <thead><tr><th scope="col">Date &amp; time</th><th scope="col">Class</th><th scope="col">Present</th><th scope="col">Rate</th><th scope="col">Index</th><th scope="col">Contrib.</th><th scope="col">Sound active</th></tr></thead>
+              <tbody id="monthly-session-rows"><tr><td colspan="7" class="table-empty">No sessions in this month yet.</td></tr></tbody>
             </table>
           </div>
           <div class="analytics-actions"><button class="button button-quiet" id="export-month" type="button" disabled>Download month CSV</button><span id="analytics-load-note" role="status" aria-live="polite">Sign in to load your saved session history.</span></div>

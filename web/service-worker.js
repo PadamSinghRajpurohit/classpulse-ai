@@ -1,6 +1,6 @@
 /* Cache only the public app shell. Authentication, API config, Supabase REST
    calls, and all other dynamic requests always go directly to the network. */
-const CACHE_NAME = "classpulse-shell-v5";
+const CACHE_NAME = "classpulse-shell-v6";
 const APP_SHELL = [
   "/",
   "/assets/styles.css",

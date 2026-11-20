@@ -2,8 +2,9 @@
 
 (() => {
   const $ = (id) => document.getElementById(id);
-  const view = { config: null, user: null, accessToken: null, mode: "signin", sessions: [], monthChosen: false };
+  const view = { config: null, user: null, accessToken: null, mode: "signin", sessions: [], monthChosen: false, demoMode: false };
   const MEDIAPIPE_VERSION = "1.2.3";
+  const MAX_SOUND_SAMPLE_COUNT = 600;
   const MEDIAPIPE_BASE = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}`;
   const FACE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/latest/blaze_face_full_range.tflite";
 
@@ -72,6 +73,13 @@
   let faceCounts = [];
   let lastVideoTime = -1;
   let autoFaceCount = true;
+  let soundStream = null;
+  let soundContext = null;
+  let soundAnalyser = null;
+  let soundSampleTimer = null;
+  let soundSampleCount = 0;
+  let soundActiveCount = 0;
+  let sessionSoundActivityPct = null;
 
   function cameraStatus(text, error = false, live = false) {
     const status = $("camera-status");
@@ -81,6 +89,115 @@
     status.classList.toggle("error", error);
     status.classList.toggle("live", live);
     indicator.classList.toggle("live", live);
+  }
+
+  function soundStatus(text, error = false, live = false) {
+    const status = $("audio-status");
+    const indicator = $("audio-live-indicator");
+    if (!status || !indicator) return;
+    status.textContent = text;
+    status.classList.toggle("error", error);
+    status.classList.toggle("live", live);
+    indicator.classList.toggle("live", live);
+  }
+
+  function renderSoundActivity() {
+    const readout = $("audio-activity-readout");
+    if (!readout) return;
+    if (sessionSoundActivityPct === null) {
+      readout.textContent = soundSampleCount ? "Sampling sound levels…" : "No sound-activity estimate yet.";
+      return;
+    }
+    readout.textContent = `Broad sound activity: ${sessionSoundActivityPct}% of sampled moments above the threshold · not speech or participation.`;
+  }
+
+  function stopSoundActivitySampler({ clear = false, statusText = "Microphone is off", error = false } = {}) {
+    if (soundSampleTimer !== null) window.clearInterval(soundSampleTimer);
+    soundSampleTimer = null;
+    if (soundStream) {
+      soundStream.getTracks().forEach((track) => {
+        try { track.stop(); } catch { /* Track may already have ended. */ }
+      });
+      soundStream = null;
+    }
+    if (soundContext) {
+      try { soundContext.close(); } catch { /* Context may already be closed. */ }
+      soundContext = null;
+    }
+    soundAnalyser = null;
+    if (clear) {
+      soundSampleCount = 0;
+      soundActiveCount = 0;
+      sessionSoundActivityPct = null;
+    } else if (soundSampleCount > 0) {
+      sessionSoundActivityPct = Math.round((soundActiveCount / soundSampleCount) * 100);
+    }
+    if ($("audio-start")) $("audio-start").disabled = view.demoMode || !$("audio-consent")?.checked;
+    if ($("audio-stop")) $("audio-stop").disabled = true;
+    soundStatus(statusText, error, false);
+    renderSoundActivity();
+    updatePreview();
+  }
+
+  async function startSoundActivitySampler() {
+    if (soundStream || view.demoMode || !$("audio-consent")?.checked) return;
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      stopSoundActivitySampler({ statusText: "Use HTTPS or localhost for microphone access", error: true });
+      return;
+    }
+    const start = $("audio-start");
+    start.disabled = true;
+    soundStatus("Waiting for microphone permission…");
+    try {
+      // No MediaRecorder or network call: sample amplitude only in this browser.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        video: false,
+      });
+      if (view.demoMode || !$("audio-consent")?.checked) {
+        stream.getTracks().forEach((track) => track.stop());
+        stopSoundActivitySampler({ clear: true, statusText: "Microphone is off" });
+        return;
+      }
+      soundStream = stream;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) throw new Error("Web Audio is unavailable in this browser.");
+      soundContext = new AudioContextClass();
+      await soundContext.resume();
+      soundAnalyser = soundContext.createAnalyser();
+      soundAnalyser.fftSize = 512;
+      soundContext.createMediaStreamSource(stream).connect(soundAnalyser);
+      const samples = new Float32Array(soundAnalyser.fftSize);
+      soundStatus("Sampling broad sound levels in this browser…", false, true);
+      $("audio-stop").disabled = false;
+      stream.getAudioTracks().forEach((track) => track.addEventListener("ended", () => {
+        if (soundStream === stream) stopSoundActivitySampler({ statusText: "Microphone ended · estimate kept for this session" });
+      }, { once: true }));
+      soundSampleTimer = window.setInterval(() => {
+        if (!soundAnalyser || !soundStream) return;
+        try {
+          soundAnalyser.getFloatTimeDomainData(samples);
+          let sumSquares = 0;
+          for (const sample of samples) sumSquares += sample * sample;
+          const rms = Math.sqrt(sumSquares / samples.length);
+          soundSampleCount += 1;
+          if (rms >= 0.015) soundActiveCount += 1;
+          sessionSoundActivityPct = Math.round((soundActiveCount / soundSampleCount) * 100);
+          renderSoundActivity();
+          updatePreview();
+          if (soundSampleCount >= MAX_SOUND_SAMPLE_COUNT) {
+            stopSoundActivitySampler({ statusText: "Five-minute sample complete · microphone off" });
+          }
+        } catch {
+          stopSoundActivitySampler({ statusText: "Sound sampling stopped after an error", error: true });
+        }
+      }, 500);
+    } catch (error) {
+      const text = error?.name === "NotAllowedError"
+        ? "Microphone permission was not granted"
+        : "Microphone unavailable · check device and browser settings";
+      stopSoundActivitySampler({ statusText: text, error: true });
+    }
   }
 
   function stopCameraPreview(text = "Camera is off · manual entry available", error = false) {
@@ -239,6 +356,7 @@
         message("auth-message", "Account created. Check your email to confirm it, then sign in.");
         return;
       }
+      view.demoMode = false;
       view.user = result.user;
       view.accessToken = result.access_token;
       showDashboard();
@@ -254,13 +372,85 @@
   function showDashboard() {
     $("auth-view").classList.add("hidden");
     $("dashboard-view").classList.remove("hidden");
-    $("logout-button").classList.remove("hidden");
+    $("sample-banner").classList.toggle("hidden", !view.demoMode);
+    $("logout-button").classList.toggle("hidden", view.demoMode);
+    setDemoControls(view.demoMode);
     const label = new Intl.DateTimeFormat(undefined, { weekday: "long", month: "short", day: "numeric" }).format(new Date());
     $("today-label").textContent = label;
   }
 
+  function setDemoControls(demo) {
+    const disabled = Boolean(demo);
+    if (disabled) {
+      stopCameraPreview();
+      stopSoundActivitySampler({ clear: true, statusText: "Microphone is off in sample mode" });
+      $("audio-consent").checked = false;
+    }
+    $("camera-start").disabled = disabled;
+    $("camera-facing").disabled = disabled;
+    $("camera-count-toggle").disabled = disabled || !cameraStream;
+    $("camera-stop").disabled = disabled || !cameraStream;
+    $("audio-consent").disabled = disabled;
+    $("audio-start").disabled = disabled || !$("audio-consent").checked || Boolean(soundStream);
+    $("audio-stop").disabled = disabled || !soundStream;
+    $("save-session").disabled = disabled;
+    document.querySelectorAll("#session-form input").forEach((input) => { input.disabled = disabled; });
+  }
+
+  function openSamplePreview() {
+    stopCameraPreview();
+    stopSoundActivitySampler({ clear: true, statusText: "Microphone is off in sample mode" });
+    view.demoMode = true;
+    view.user = null;
+    view.accessToken = null;
+    view.monthChosen = true;
+    const now = new Date();
+    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const days = [3, 7, 12, 18].map((day) => Math.min(day, lastDay));
+    const samples = [
+      ["Biology · Cell division", 30, 27, 78, 16, 45],
+      ["Physics · Wave motion", 28, 24, 71, 12, 38],
+      ["Mathematics · Integrals", 32, 29, 84, 21, 57],
+      ["Chemistry · Reactions", 30, 26, 76, 18, 48],
+    ];
+    view.sessions = samples.map(([class_name, enrollment_count, attendance_count, engagement_score, participation_count, sound_active_pct], index) => ({
+      id: `synthetic-${index + 1}`,
+      class_name,
+      started_at: new Date(now.getFullYear(), now.getMonth(), days[index], 8 + index * 2, 0, 0).toISOString(),
+      enrollment_count,
+      attendance_count,
+      engagement_score,
+      participation_count,
+      summary: { audio_quality: { sound_active_pct } },
+    }));
+    $("analytics-month").value = localMonthKey(now);
+    $("analytics-load-note").textContent = "Synthetic sample rows only · no account data was requested.";
+    $("analytics-load-note").classList.remove("error");
+    message("session-message", "");
+    showDashboard();
+    renderSessions();
+  }
+
+  function exitSamplePreview() {
+    stopCameraPreview();
+    stopSoundActivitySampler({ clear: true, statusText: "Microphone is off" });
+    view.demoMode = false;
+    view.user = null;
+    view.accessToken = null;
+    view.sessions = [];
+    view.monthChosen = false;
+    $("sample-banner").classList.add("hidden");
+    $("dashboard-view").classList.add("hidden");
+    $("auth-view").classList.remove("hidden");
+    $("logout-button").classList.add("hidden");
+    setDemoControls(false);
+    renderSessions();
+    setMode("signin");
+  }
+
   function signOut() {
     stopCameraPreview();
+    stopSoundActivitySampler({ clear: true, statusText: "Microphone is off" });
     // The token is memory-only: reloads and sign-out discard it from this page.
     const token = view.accessToken;
     if (token) {
@@ -273,6 +463,7 @@
     view.accessToken = null;
     view.sessions = [];
     view.monthChosen = false;
+    view.demoMode = false;
     $("dashboard-view").classList.add("hidden");
     $("auth-view").classList.remove("hidden");
     $("logout-button").classList.add("hidden");
@@ -283,13 +474,18 @@
   async function loadSessions() {
     const loadNote = $("analytics-load-note");
     loadNote.classList.remove("error");
+    if (view.demoMode) {
+      renderSessions();
+      loadNote.textContent = "Synthetic sample rows only · no account data was requested.";
+      return;
+    }
     loadNote.textContent = "Loading your secure session history…";
     try {
       const pageSize = 500;
       const rows = [];
       for (let offset = 0; ; offset += pageSize) {
         const query = new URLSearchParams({
-          select: "id,class_name,started_at,enrollment_count,attendance_count,engagement_score,participation_count",
+          select: "id,class_name,started_at,enrollment_count,attendance_count,engagement_score,participation_count,summary",
           owner_id: `eq.${view.user.id}`,
           order: "started_at.desc",
           limit: String(pageSize),
@@ -328,7 +524,7 @@
   function renderSessions() {
     const rows = view.sessions;
     $("sessions-count").textContent = String(rows.length);
-    $("recent-count").textContent = `${rows.length} saved`;
+    $("recent-count").textContent = view.demoMode ? `${rows.length} sample rows` : `${rows.length} saved`;
     const totalEnrolled = rows.reduce((sum, row) => sum + Number(row.enrollment_count || 0), 0);
     const totalPresent = rows.reduce((sum, row) => sum + Number(row.attendance_count || 0), 0);
     const avgAttendance = totalEnrolled ? Math.round((totalPresent / totalEnrolled) * 100) : null;
@@ -344,7 +540,7 @@
       empty.className = "empty-state";
       const orbit = document.createElement("span"); orbit.className = "empty-orbit"; orbit.textContent = "◌";
       const strong = document.createElement("strong"); strong.textContent = "Your first session starts here";
-      const p = document.createElement("p"); p.textContent = "Save a session summary and it will show up in this list.";
+      const p = document.createElement("p"); p.textContent = view.demoMode ? "Synthetic sample rows will appear here." : "Save a session summary and it will show up in this list.";
       empty.append(orbit, strong, p); list.append(empty);
       renderMonthlyAnalytics();
       return;
@@ -356,11 +552,13 @@
       const details = document.createElement("span");
       const date = row.started_at ? new Date(row.started_at) : new Date();
       const dateText = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" }).format(date);
-      details.textContent = `${dateText} · ${Number(row.attendance_count || 0)} / ${Number(row.enrollment_count || 0)} present`;
+      const soundPct = row.summary?.audio_quality?.sound_active_pct;
+      const soundDetails = soundPct !== null && soundPct !== undefined && Number.isFinite(Number(soundPct)) ? ` · ${Math.round(Number(soundPct))}% sound active` : "";
+      details.textContent = `${dateText} · ${Number(row.attendance_count || 0)} / ${Number(row.enrollment_count || 0)} present${soundDetails}`;
       info.append(title, details);
       const score = document.createElement("div"); score.className = "session-score";
       score.textContent = row.engagement_score !== null && row.engagement_score !== undefined && row.engagement_score !== "" && Number.isFinite(Number(row.engagement_score)) ? String(Math.round(Number(row.engagement_score))) : "—";
-      const scoreLabel = document.createElement("small"); scoreLabel.textContent = "pulse / 100"; score.append(scoreLabel);
+      const scoreLabel = document.createElement("small"); scoreLabel.textContent = "group index / 100"; score.append(scoreLabel);
       item.append(info, score); list.append(item);
     }
     renderMonthlyAnalytics();
@@ -398,8 +596,12 @@
     const monthLabel = Number.isFinite(selectedDate.getTime())
       ? new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(selectedDate)
       : "Selected month";
-    $("analytics-month-label").textContent = `${monthLabel} · ${rows.length} saved session${rows.length === 1 ? "" : "s"}`;
-    $("monthly-table-caption").textContent = `${monthLabel} session details · local date and time`;
+    $("analytics-month-label").textContent = view.demoMode
+      ? `${monthLabel} · ${rows.length} synthetic sample session${rows.length === 1 ? "" : "s"}`
+      : `${monthLabel} · ${rows.length} saved session${rows.length === 1 ? "" : "s"}`;
+    $("monthly-table-caption").textContent = view.demoMode
+      ? `${monthLabel} synthetic sample details · not saved`
+      : `${monthLabel} session details · local date and time`;
     $("month-sessions").textContent = String(rows.length);
     const enrolled = rows.reduce((total, row) => total + Number(row.enrollment_count || 0), 0);
     const present = rows.reduce((total, row) => total + Number(row.attendance_count || 0), 0);
@@ -407,9 +609,15 @@
     const scores = rows.map((row) => row.engagement_score).filter((score) => score !== null && score !== undefined && score !== "").map(Number).filter(Number.isFinite);
     $("month-pulse").textContent = scores.length ? String(Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length)) : "—";
     $("month-contributions").textContent = String(rows.reduce((sum, row) => sum + Number(row.participation_count || 0), 0));
+    const soundScores = rows
+      .map((row) => row.summary?.audio_quality?.sound_active_pct)
+      .filter((value) => value !== null && value !== undefined && value !== "")
+      .map(Number)
+      .filter(Number.isFinite);
+    $("month-sound").textContent = soundScores.length ? `${Math.round(soundScores.reduce((sum, score) => sum + score, 0) / soundScores.length)}%` : "—";
     renderAnalyticsChart(rows, monthLabel);
     renderMonthlyTable(rows);
-    $("export-month").disabled = rows.length === 0;
+    $("export-month").disabled = rows.length === 0 || view.demoMode;
   }
 
   function renderAnalyticsChart(rows, monthLabel) {
@@ -423,7 +631,7 @@
       frame.append(empty);
       return;
     }
-    const svg = svgElement("svg", { viewBox: "0 0 680 250", role: "img", "aria-label": `Attendance rate and engagement pulse for ${monthLabel}, across ${chartRows.length} saved sessions` });
+    const svg = svgElement("svg", { viewBox: "0 0 680 250", role: "img", "aria-label": `Attendance rate, attendance/participation index, and broad sound activity for ${monthLabel}, across ${chartRows.length} sessions` });
     const left = 40, right = 666, top = 20, bottom = 210;
     for (const tick of [0, 25, 50, 75, 100]) {
       const y = bottom - (tick / 100) * (bottom - top);
@@ -434,16 +642,20 @@
     const yAt = (value) => bottom - (Math.max(0, Math.min(100, value)) / 100) * (bottom - top);
     const attendancePoints = [];
     const pulsePoints = [];
+    const soundPoints = [];
     chartRows.forEach((row, index) => {
       const enrolledCount = Number(row.enrollment_count);
       const attendanceCount = Number(row.attendance_count);
       const attendanceRate = enrolledCount > 0 ? (attendanceCount / enrolledCount) * 100 : NaN;
       const pulse = Number(row.engagement_score);
+      const soundValue = row.summary?.audio_quality?.sound_active_pct;
+      const sound = soundValue === null || soundValue === undefined || soundValue === "" ? NaN : Number(soundValue);
       const x = xAt(index);
       if (Number.isFinite(attendanceRate)) attendancePoints.push({ x, y: yAt(attendanceRate), row, value: Math.round(attendanceRate), kind: "attendance" });
       if (row.engagement_score !== null && row.engagement_score !== undefined && row.engagement_score !== "" && Number.isFinite(pulse)) pulsePoints.push({ x, y: yAt(pulse), row, value: Math.round(pulse), kind: "pulse" });
+      if (Number.isFinite(sound)) soundPoints.push({ x, y: yAt(sound), row, value: Math.round(sound), kind: "sound" });
     });
-    for (const [points, pathClass, pointClass, label] of [[attendancePoints, "chart-attendance-line", "chart-point-attendance", "Attendance"], [pulsePoints, "chart-pulse-line", "chart-point-pulse", "Pulse"]]) {
+    for (const [points, pathClass, pointClass, label] of [[attendancePoints, "chart-attendance-line", "chart-point-attendance", "Attendance"], [pulsePoints, "chart-pulse-line", "chart-point-pulse", "Group index"], [soundPoints, "chart-sound-line", "chart-point-sound", "Sound activity"]]) {
       if (!points.length) continue;
       const path = points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
       svg.append(svgElement("path", { d: path, class: pathClass }));
@@ -469,7 +681,7 @@
     tbody.replaceChildren();
     if (!rows.length) {
       const tr = document.createElement("tr");
-      const td = document.createElement("td"); td.colSpan = 6; td.className = "table-empty"; td.textContent = "No sessions in this month yet.";
+      const td = document.createElement("td"); td.colSpan = 7; td.className = "table-empty"; td.textContent = "No sessions in this month yet.";
       tr.append(td); tbody.append(tr); return;
     }
     for (const row of [...rows].reverse()) {
@@ -482,6 +694,7 @@
         Number(row.enrollment_count) > 0 ? `${Math.round((Number(row.attendance_count || 0) / Number(row.enrollment_count)) * 100)}%` : "—",
         row.engagement_score !== null && row.engagement_score !== undefined && row.engagement_score !== "" && Number.isFinite(Number(row.engagement_score)) ? String(Math.round(Number(row.engagement_score))) : "—",
         String(Number(row.participation_count || 0)),
+        row.summary?.audio_quality?.sound_active_pct !== null && row.summary?.audio_quality?.sound_active_pct !== undefined && Number.isFinite(Number(row.summary.audio_quality.sound_active_pct)) ? `${Math.round(Number(row.summary.audio_quality.sound_active_pct))}%` : "—",
       ];
       for (const text of cells) { const td = document.createElement("td"); td.textContent = text; tr.append(td); }
       tbody.append(tr);
@@ -491,12 +704,13 @@
   function exportMonthlyCsv() {
     const rows = [...selectedMonthRows()].reverse();
     if (!rows.length) return;
-    const headers = ["Date and time (local)", "Class", "Enrolled", "Present", "Attendance rate (%)", "Engagement pulse", "Participation contributions"];
+    const headers = ["Date and time (local)", "Class", "Enrolled", "Present", "Attendance rate (%)", "Attendance/participation index", "Participation contributions", "Sound-active sample (%)"];
     const values = rows.map((row) => {
       const enrollment = Number(row.enrollment_count || 0);
       const present = Number(row.attendance_count || 0);
       const score = row.engagement_score === null || row.engagement_score === undefined ? "" : row.engagement_score;
-      return [new Date(row.started_at).toLocaleString(), row.class_name || "Class session", enrollment, present, enrollment ? Math.round((present / enrollment) * 100) : "", score, Number(row.participation_count || 0)];
+      const soundPct = row.summary?.audio_quality?.sound_active_pct;
+      return [new Date(row.started_at).toLocaleString(), row.class_name || "Class session", enrollment, present, enrollment ? Math.round((present / enrollment) * 100) : "", score, Number(row.participation_count || 0), soundPct ?? ""];
     });
     const csv = [headers, ...values].map((line) => line.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(",")).join("\r\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -519,16 +733,23 @@
     const preview = $("insight-preview");
     const spark = document.createElement("span"); spark.className = "insight-spark"; spark.textContent = "✳";
     const copy = document.createElement("span");
-    if (score === null) copy.textContent = "Enter valid enrollment and attendance totals to estimate the group pulse.";
-    else if (score >= 75) copy.textContent = `Group pulse estimate: ${score}/100. Attendance and participation are both showing up.`;
-    else if (score >= 50) copy.textContent = `Group pulse estimate: ${score}/100. Consider a short check-in to invite more voices.`;
-    else copy.textContent = `Group pulse estimate: ${score}/100. A low signal is a prompt to ask, not a conclusion.`;
+    if (score === null) copy.textContent = "Enter valid enrollment and attendance totals to estimate the attendance/participation index.";
+    else if (score >= 75) copy.textContent = `Attendance/participation index: ${score}/100 · a simple unvalidated group heuristic, not attention or learning.`;
+    else if (score >= 50) copy.textContent = `Attendance/participation index: ${score}/100 · a simple unvalidated group heuristic, not attention or learning.`;
+    else copy.textContent = `Attendance/participation index: ${score}/100 · a low signal is a prompt to ask, not a conclusion.`;
+    if (sessionSoundActivityPct !== null) {
+      copy.textContent += ` Sound activity: ${sessionSoundActivityPct}% of sampled moments above a broad threshold; not speech or participation.`;
+    }
     preview.replaceChildren(spark, copy);
   }
 
   async function saveSession(event) {
     event.preventDefault();
     message("session-message", "");
+    if (view.demoMode || !view.user?.id || !view.accessToken) {
+      message("session-message", "Sample preview cannot save. Sign in to save a real session.", true);
+      return;
+    }
     const className = $("class-name").value.trim();
     const sessionDate = new Date($("session-datetime").value);
     const enrollment = Number($("enrollment").value);
@@ -538,6 +759,7 @@
       message("session-message", "Check the class label, date, and totals. Present learners cannot exceed enrollment.", true);
       return;
     }
+    stopSoundActivitySampler({ statusText: "Sampler stopped with session save" });
     const score = estimatePulse(enrollment, attendance, participation);
     const recommendationCodes = [];
     if (attendance / enrollment < 0.75) recommendationCodes.push("quick_check_in");
@@ -550,7 +772,10 @@
       attendance_count: attendance,
       engagement_score: score,
       participation_count: participation,
-      summary: { recommendation_codes: recommendationCodes },
+      summary: {
+        recommendation_codes: recommendationCodes,
+        ...(sessionSoundActivityPct !== null ? { audio_quality: { sound_active_pct: sessionSoundActivityPct } } : {}),
+      },
     };
     const button = $("save-session");
     button.disabled = true; button.textContent = "Saving securely…";
@@ -565,6 +790,9 @@
         body: JSON.stringify(body),
       });
       $("session-form").reset(); $("session-datetime").value = localDateTimeValue(); $("participation").value = "0"; updatePreview();
+      stopSoundActivitySampler({ clear: true, statusText: "Microphone is off" });
+      $("audio-consent").checked = false;
+      $("audio-start").disabled = true;
       message("session-message", "Summary saved. Only group totals were sent to your protected Supabase table.");
       await loadSessions();
     } catch (error) {
@@ -590,6 +818,8 @@
     $("session-datetime").value = localDateTimeValue();
     $("signin-tab").addEventListener("click", () => setMode("signin"));
     $("signup-tab").addEventListener("click", () => setMode("signup"));
+    $("preview-sample").addEventListener("click", openSamplePreview);
+    $("exit-preview").addEventListener("click", exitSamplePreview);
     $("auth-form").addEventListener("submit", authenticate);
     $("logout-button").addEventListener("click", signOut);
     $("camera-start").addEventListener("click", startCameraPreview);
@@ -609,10 +839,29 @@
     $("camera-facing").addEventListener("change", () => {
       if (cameraStream) stopCameraPreview("Preview stopped · press Start to switch cameras");
     });
-    window.addEventListener("pagehide", () => stopCameraPreview());
-    window.addEventListener("beforeunload", () => stopCameraPreview());
+    $("audio-consent").addEventListener("change", () => {
+      if (!$("audio-consent").checked) {
+        stopSoundActivitySampler({ clear: true, statusText: "Consent withdrawn · microphone off" });
+      } else {
+        $("audio-start").disabled = view.demoMode;
+        soundStatus("Ready · press Start sound sampler to use the microphone");
+      }
+    });
+    $("audio-start").addEventListener("click", startSoundActivitySampler);
+    $("audio-stop").addEventListener("click", () => stopSoundActivitySampler({ statusText: "Sampler stopped · estimate kept for this session" }));
+    window.addEventListener("pagehide", () => {
+      stopCameraPreview();
+      stopSoundActivitySampler({ statusText: "Sampler stopped · page hidden" });
+    });
+    window.addEventListener("beforeunload", () => {
+      stopCameraPreview();
+      stopSoundActivitySampler({ statusText: "Sampler stopped · leaving page" });
+    });
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden && cameraStream) stopCameraPreview("Preview stopped while page was hidden");
+      if (document.hidden) {
+        if (cameraStream) stopCameraPreview("Preview stopped while page was hidden");
+        if (soundStream) stopSoundActivitySampler({ statusText: "Sampler stopped while page was hidden · estimate kept" });
+      }
     });
     $("session-form").addEventListener("submit", saveSession);
     ["enrollment", "attendance", "participation"].forEach((id) => $(id).addEventListener("input", updatePreview));

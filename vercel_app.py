@@ -24,7 +24,7 @@ def _send(start_response: StartResponse, status: str, body: bytes, content_type:
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ("X-Frame-Options", "DENY"),
-        ("Permissions-Policy", "camera=(self), microphone=(), geolocation=()"),
+        ("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()"),
     ])
     return [body]
 
@@ -107,7 +107,7 @@ def application(environ: dict, start_response: StartResponse) -> list[bytes]:
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ("X-Frame-Options", "DENY"),
-        ("Permissions-Policy", "camera=(self), microphone=(), geolocation=()"),
+        ("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()"),
         ("Content-Security-Policy", csp),
     ]
     if path == "/service-worker.js":
