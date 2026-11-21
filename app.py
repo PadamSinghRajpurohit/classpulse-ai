@@ -87,6 +87,17 @@ def _safe_user_name(user: Any) -> str:
     return "Instructor"
 
 
+def _uses_persistent_supabase_storage(user: Any) -> bool:
+    return bool(
+        isinstance(user, dict)
+        and user.get("backend") == "supabase"
+        and getattr(user, "access_token", None)
+        and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}
+        and os.getenv("SUPABASE_URL", "").strip()
+        and os.getenv("SUPABASE_ANON_KEY", "").strip()
+    )
+
+
 def _fallback_data() -> dict[str, Any]:
     """Sample content makes the application explorable before setup is complete."""
     return {
@@ -132,10 +143,18 @@ def _dashboard_data(user: Any) -> dict[str, Any]:
                 recent = data.get("recent_sessions") or []
                 engagement = data.get("engagement_average")
                 trend = [s.get("engagement_score") for s in reversed(recent) if s.get("engagement_score") is not None]
+                try:
+                    roster = storage.list_students(user_id, access_token=token) if user_id is not None else []
+                    today_records = storage.list_attendance(
+                        user_id, date.today().isoformat(), access_token=token
+                    ) if user_id is not None else []
+                except Exception:
+                    roster, today_records = [], []
+                today_present = sum(1 for row in today_records if row.get("present"))
                 metrics = {
-                    "attendance_rate": data.get("attendance_rate") or 0,
-                    "present_count": data.get("attendance_total") or 0,
-                    "student_count": data.get("enrollment_total") or 0,
+                    "attendance_rate": round(100 * today_present / len(today_records)) if today_records else data.get("attendance_rate") or 0,
+                    "present_count": today_present if today_records else data.get("attendance_total") or 0,
+                    "student_count": len(roster) if roster else data.get("enrollment_total") or 0,
                     "engagement_score": engagement if engagement is not None else "—",
                     "participation_count": data.get("participation_total") or 0,
                     "sessions_this_week": data.get("sessions_this_week") or 0,
@@ -147,12 +166,18 @@ def _dashboard_data(user: Any) -> dict[str, Any]:
                         {"name": s.get("class_name", "Class session"), "time": str(s.get("started_at", ""))[:16], "room": "Saved session", "status": "Complete"}
                         for s in recent
                     ],
-                    # The storage API intentionally persists aggregate session summaries only.
-                    "attendance": [],
+                    # Roster rows are returned only for this authenticated owner.
+                    "attendance": [
+                        {"student": row.get("student_name", "Student"),
+                         "student_id": row.get("student_code", ""),
+                         "status": str(row.get("status", "unmarked")).title(),
+                         "confidence": "Manually confirmed"}
+                        for row in today_records
+                    ],
                     "insights": [],
                 }
         except Exception:
-            pass
+            st.warning("Your saved dashboard data could not be loaded. Check the signed-in account's storage configuration and refresh.")
     return {
         "metrics": {"attendance_rate": 0, "present_count": 0, "student_count": 0,
                     "engagement_score": "—", "participation_count": 0, "sessions_this_week": 0},
@@ -235,8 +260,13 @@ def _sidebar(user: Any) -> str:
     with st.sidebar:
         st.markdown('<div class="sidebar-brand"><span class="brand-mark">CP</span><span>ClassPulse <b>AI</b></span></div>', unsafe_allow_html=True)
         st.caption("INSTRUCTOR WORKSPACE")
-        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() not in {"1", "true", "yes"}:
-            st.warning("Hosted SQLite data can reset after a restart. Add Supabase Auth and session-sync secrets for durable summaries; avoid real rosters in this deployment.")
+        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud":
+            if user.get("demo"):
+                st.info("Demo mode uses example data only. Sign in to save your own class records.")
+            elif _uses_persistent_supabase_storage(user):
+                st.success("Your class roster, attendance, and session summaries use your Supabase account.")
+            else:
+                st.warning("This account is using hosted SQLite. Streamlit may reset it after a restart. Configure Supabase Auth and sync in private App Secrets for durable class data.")
         page = st.radio("Navigation", ["Overview", "Attendance", "Live session", "Insights", "AI teaching coach"], label_visibility="collapsed")
         st.markdown("<div class='sidebar-spacer'></div>", unsafe_allow_html=True)
         st.toggle("Dark mode", key="dark_mode", help="Switch between dark and light appearance.")
@@ -257,6 +287,12 @@ def _render_overview(data: dict[str, Any]) -> None:
     st.markdown(f'<div class="page-kicker">{date.today().strftime("%A, %d %b %Y").upper()}</div>', unsafe_allow_html=True)
     st.title("Your classroom, at a glance")
     st.markdown("A clear read on today’s attendance and engagement signals.")
+    metrics_empty = not data.get("classes") and not any((
+        metrics.get("present_count"), metrics.get("student_count"),
+        metrics.get("participation_count"), metrics.get("sessions_this_week"),
+    ))
+    if metrics_empty:
+        st.info("Your account is ready. Create a class and roster in Attendance, then analyze and save a session to build your personal dashboard. Demo sample data is kept separate from your account.")
     cols = st.columns(4)
     with cols[0]: _metric_card("ATTENDANCE RATE", f"{metrics.get('attendance_rate', 84)}%", f"{metrics.get('present_count', 126)} of {metrics.get('student_count', 150)} roster entries present")
     with cols[1]: _metric_card("CLASS ENGAGEMENT", f"{metrics.get('engagement_score', 78)} /100", "Group-level estimate · review before acting", "mint")
@@ -276,11 +312,14 @@ def _render_overview(data: dict[str, Any]) -> None:
     with right:
         with st.container(border=True):
             st.subheader("Recent sessions")
-            for item in data.get("classes", []):
+            recent_sessions = data.get("classes", [])
+            for item in recent_sessions:
                 with st.container(border=True):
                     st.markdown(f"**{item.get('name', 'Class session')}**")
                     st.caption(f"{item.get('time', '')} · {item.get('room', '')}")
                     st.markdown(f"<span class='status-pill'>{escape(str(item.get('status', 'Scheduled')))}</span>", unsafe_allow_html=True)
+            if not recent_sessions:
+                st.info("No saved sessions yet. Analyze a class session to start your history.")
     below_left, below_right = st.columns([1.15, 1])
     with below_left:
         with st.container(border=True):
@@ -293,10 +332,13 @@ def _render_overview(data: dict[str, Any]) -> None:
     with below_right:
         with st.container(border=True):
             st.subheader("Instructor suggestions")
-            for insight in data.get("insights", [])[:3]:
+            insights = data.get("insights", [])[:3]
+            for insight in insights:
                 st.markdown(f"**{insight.get('title', 'Classroom signal')}**")
                 st.caption(insight.get("detail", "Review the session signals."))
                 st.markdown("---")
+            if not insights:
+                st.info("Teaching suggestions appear here after you analyze a session. The AI coach and quiz builder are ready in the sidebar.")
 
 
 def _render_attendance(data: dict[str, Any]) -> None:
@@ -305,6 +347,7 @@ def _render_attendance(data: dict[str, Any]) -> None:
     st.markdown("Add a local class roster, then confirm each student’s attendance yourself. Face counts can prompt a review, but never identify or mark a student automatically.")
     user = st.session_state.get("user") or {}
     owner_id = user.get("id") if isinstance(user, dict) else None
+    access_token = getattr(user, "access_token", None) if isinstance(user, dict) else None
     is_demo = isinstance(user, dict) and user.get("demo")
     class_id = None
     if is_demo:
@@ -315,10 +358,13 @@ def _render_attendance(data: dict[str, Any]) -> None:
         )
     else:
         try:
-            local_classes = storage.list_classes(owner_id) if storage is not None and owner_id is not None else []
+            local_classes = storage.list_classes(owner_id, access_token=access_token) if storage is not None and owner_id is not None else []
         except Exception:
             local_classes = []
-            st.error("Local classes could not be loaded. Check database setup and refresh.")
+            if access_token and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}:
+                st.error("Supabase class tables could not be loaded. Check that the latest class-roster migration is applied to your project.")
+            else:
+                st.error("Local classes could not be loaded. Check database setup and refresh.")
         if not local_classes:
             st.info("Create a class first. Each class keeps its own roster and attendance history.")
             with st.form("create_local_class_form", clear_on_submit=True):
@@ -326,29 +372,30 @@ def _render_attendance(data: dict[str, Any]) -> None:
                 create = st.form_submit_button("Create class", type="primary")
                 if create:
                     try:
-                        class_id = storage.create_class(owner_id, new_class)
+                        storage.create_class(owner_id, new_class, access_token=access_token)
                         st.success("Class created. Add its students below.")
                         st.rerun()
                     except ValueError as exc:
                         st.error(str(exc))
+                    except RuntimeError as exc:
+                        st.error(str(exc))
                     except Exception:
-                        st.error("Class could not be created in local storage.")
-            session_date = st.date_input("Session date", value=date.today(), key="attendance_session_date")
-            st.markdown("<div class='privacy-note'>Local SQLite roster. Camera frames stay in your browser; only an approximate count is returned.</div>", unsafe_allow_html=True)
-            return
-        selected = st.selectbox(
-            "Class",
-            local_classes,
-            format_func=lambda row: row["name"],
-            key="attendance_class_select",
-        )
-        class_id = int(selected["id"])
-        class_name = selected["name"]
+                        st.error("Class could not be saved. Check the database configuration and try again.")
+            class_name = ""
+        else:
+            selected = st.selectbox(
+                "Class",
+                local_classes,
+                format_func=lambda row: row["name"],
+                key="attendance_class_select",
+            )
+            class_id = int(selected["id"])
+            class_name = selected["name"]
     controls = st.columns([1, 1.6])
     with controls[0]:
         session_date = st.date_input("Session date", value=date.today(), key="attendance_session_date")
     with controls[1]:
-        st.markdown("<div class='privacy-note'>Roster and attendance use local SQLite. Camera frames are analyzed in your browser; only an approximate count returns to this app.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='privacy-note'>Camera frames are analyzed in your browser; only an approximate count returns to this app. Supabase-authenticated accounts use their own Supabase project when sync is enabled; local accounts use SQLite.</div>", unsafe_allow_html=True)
 
     if is_demo:
         st.info("Demo roster · example names and statuses only. Changes stay in this browser session and are not saved to the database.")
@@ -369,12 +416,12 @@ def _render_attendance(data: dict[str, Any]) -> None:
             roster = st.session_state.get("demo_roster", [])
     else:
         try:
-            roster = storage.list_students(owner_id, class_id) if storage is not None and owner_id is not None else []
+            roster = storage.list_students(owner_id, class_id, access_token=access_token) if storage is not None and owner_id is not None and class_id is not None else []
         except Exception:
             roster = []
             st.error("The local roster could not be loaded. Check the database setup and refresh.")
 
-    if not is_demo:
+    if not is_demo and class_id is not None:
         with st.expander("Manage this class roster", expanded=not bool(roster)):
             with st.form("add_student_form", clear_on_submit=True):
                 new_name = st.text_input("Student name", max_chars=100)
@@ -387,18 +434,22 @@ def _render_attendance(data: dict[str, Any]) -> None:
                         st.error("Enter a student name.")
                     else:
                         try:
-                            storage.add_student(owner_id, new_name.strip(), new_code.strip(), class_id=class_id)
+                            storage.add_student(owner_id, new_name.strip(), new_code.strip(), class_id=class_id, access_token=access_token)
                             st.success("Student added to this class roster.")
                             st.rerun()
                         except Exception:
                             st.error("Student could not be added. Check for a duplicate roster code and try again.")
             if class_id is not None:
-                unenrolled = storage.list_unenrolled_students(owner_id, class_id)
+                try:
+                    unenrolled = storage.list_unenrolled_students(owner_id, class_id, access_token=access_token)
+                except Exception:
+                    unenrolled = []
+                    st.warning("Existing students could not be loaded. You can still add a new student to this class.")
                 if unenrolled:
                     with st.form("enroll_existing_student_form", clear_on_submit=True):
                         existing_id = st.selectbox("Add an existing local student", unenrolled, format_func=lambda row: f"{row['name']} · {row['student_code']}")
                         if st.form_submit_button("Enroll in this class"):
-                            storage.enroll_student(owner_id, class_id, int(existing_id["id"]))
+                            storage.enroll_student(owner_id, class_id, int(existing_id["id"]), access_token=access_token)
                             st.success("Student enrolled in this class.")
                             st.rerun()
 
@@ -406,7 +457,7 @@ def _render_attendance(data: dict[str, Any]) -> None:
         prior_status = {}
         if not is_demo and storage is not None:
             try:
-                saved = storage.list_attendance(owner_id, session_date.isoformat(), class_name.strip())
+                saved = storage.list_attendance(owner_id, session_date.isoformat(), class_name.strip(), access_token=access_token)
                 prior_status = {str(row.get("student_id")): ("Present" if row.get("present") else "Absent") for row in saved}
             except Exception:
                 st.warning("Could not load saved attendance for this date and class.")
@@ -452,8 +503,8 @@ def _render_attendance(data: dict[str, Any]) -> None:
                             {"student_id": int(row.student_id), "present": row.status == "Present"}
                             for row in edited.itertuples(index=False)
                         ]
-                        storage.save_attendance(owner_id, session_date.isoformat(), class_name.strip(), records)
-                        st.success("Attendance saved locally for this class and date.")
+                        storage.save_attendance(owner_id, session_date.isoformat(), class_name.strip(), records, access_token=access_token)
+                        st.success("Attendance saved for this class and date.")
                         st.rerun()
                     except Exception:
                         st.error("Attendance could not be saved. Confirm every status and try again.")
@@ -463,7 +514,7 @@ def _render_attendance(data: dict[str, Any]) -> None:
                 confirm_remove = st.checkbox("Confirm local removal", key="confirm_remove_student")
                 if st.button("Remove", disabled=remove_id is None or not confirm_remove, key="remove_student_button"):
                     try:
-                        storage.remove_student_from_class(owner_id, class_id, int(remove_id))
+                        storage.remove_student_from_class(owner_id, class_id, int(remove_id), access_token=access_token)
                         st.success("Student removed from this class. Their other classes and history remain.")
                         st.rerun()
                     except Exception:
@@ -477,7 +528,9 @@ def _render_attendance(data: dict[str, Any]) -> None:
         st.info("Your local roster is empty. Add students above to start manual attendance.")
     with st.expander("Live camera attendance estimate", expanded=True):
         st.caption("Select the class above, then start the camera. The browser estimates how many faces are visible and never identifies people or marks names present. Confirm each student in the roster before saving.")
-        camera_state = _CAMERA_COUNTER(key=f"attendance_camera_{owner_id}_{class_id or class_name}", default={"active": False, "count": None})
+        if class_id is None and not is_demo:
+            st.caption("You can preview a face count before creating a class; attendance requires a selected class and roster.")
+        camera_state = _CAMERA_COUNTER(key=f"attendance_camera_{owner_id}_{class_id or class_name or 'unassigned'}", default={"active": False, "count": None})
         if isinstance(camera_state, dict) and camera_state.get("active") and isinstance(camera_state.get("count"), int):
             visible_estimate = max(0, min(1000, camera_state["count"]))
             st.metric("Approx. visible faces · estimate", visible_estimate)
@@ -514,10 +567,11 @@ def _render_session() -> None:
         st.caption("The Python pipeline estimates group-level visual cues and broad audio activity; it does not identify people. Media is processed temporarily by this app server and is not retained in project storage or the database. A hosted deployment processes media on its host; run this app locally if recordings must stay on the instructor’s device.")
         session_user = st.session_state.get("user") or {}
         session_owner = session_user.get("id") if isinstance(session_user, dict) else None
+        session_token = getattr(session_user, "access_token", None) if isinstance(session_user, dict) else None
         session_classes = []
         if not (isinstance(session_user, dict) and session_user.get("demo")) and storage is not None and session_owner is not None:
             try:
-                session_classes = storage.list_classes(session_owner)
+                session_classes = storage.list_classes(session_owner, access_token=session_token)
             except Exception:
                 session_classes = []
         if session_classes:
@@ -793,6 +847,7 @@ def _render_session() -> None:
                     manual_records = storage.list_attendance(
                         user.get("id"), context.get("session_date", date.today().isoformat()),
                         context.get("class_name", result.get("session_label") or "Class session"),
+                        access_token=getattr(user, "access_token", None),
                     )
                     present_count = sum(1 for row in manual_records if row.get("present"))
                     st.caption(
@@ -811,6 +866,7 @@ def _render_session() -> None:
                         owner_id,
                         context.get("session_date", date.today().isoformat()),
                         context.get("class_name", result.get("session_label") or "Class session"),
+                        access_token=getattr(user, "access_token", None),
                     )
                     present_count = sum(1 for row in manual_records if row.get("present"))
                     summary = {
@@ -851,6 +907,8 @@ def _render_insights(data: dict[str, Any]) -> None:
             st.markdown(f"<div class='insight-index'>0{idx + 1}</div>", unsafe_allow_html=True)
             st.subheader(insight.get("title", "Classroom signal"))
             st.write(insight.get("detail", "Review the session signals."))
+    if not data.get("insights"):
+        st.info("Your account has no saved session suggestions yet. Use Live session to analyze an authorized class recording or audio sample, then save its aggregate summary. No demo suggestions are mixed into your account.")
     st.info("Suggestions are generated from noisy signals and should be reviewed in the context of your class.")
 
 
@@ -864,8 +922,13 @@ def main() -> None:
             st.toggle("Dark mode", key="dark_mode", help="Switch between dark and light appearance.")
         if st.session_state.dark_mode:
             st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
-        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() not in {"1", "true", "yes"}:
-            st.warning("Hosted SQLite data may reset after restarts. Configure Supabase Auth and session sync before using real class records.")
+        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and not (
+            os.getenv("AUTH_BACKEND", "local").strip().casefold() == "supabase"
+            and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}
+            and os.getenv("SUPABASE_URL", "").strip()
+            and os.getenv("SUPABASE_ANON_KEY", "").strip()
+        ):
+            st.warning("Hosted accounts and class data may reset while SQLite mode is selected. Configure your own Supabase Auth and sync in private App Secrets for durable data.")
         _login_screen()
         return
     page = _sidebar(user)
