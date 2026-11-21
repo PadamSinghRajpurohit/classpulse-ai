@@ -111,7 +111,7 @@ You do not need to create a `.env` file for local-only use. If you later choose 
 - `app.py` — Streamlit interface
 - `vercel_app.py` and `web/` — stateless Vercel web preview
 - `auth.py` — sign-up and login
-- `storage.py` — local SQLite and optional Supabase data adapter
+- `classpulse_storage.py` — local SQLite and optional Supabase data adapter; uniquely named to avoid package collisions\n- `storage.py` — compatibility import for older local scripts
 - `ai_pipeline.py` — local multimodal signal analysis and recommendations
 - `streamlit_cloud/` — isolated Streamlit Community Cloud entrypoint and dependencies
 - `ai_chatbot.py` / `ai_chatbot_ui.py` — optional Gemini teaching coach and quiz builder
