@@ -8,7 +8,6 @@ the database.
 from __future__ import annotations
 
 import json
-import importlib.util
 import os
 import secrets
 import sqlite3
@@ -392,6 +391,7 @@ def save_attendance(
     class_name: str,
     rows: list[dict[str, Any]],
     access_token: str | None = None,
+    class_id: int | None = None,
 ) -> int:
     """Upsert manual statuses for one local roster, class, and ISO date.
 
@@ -433,6 +433,18 @@ def save_attendance(
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if _remote_roster_enabled(owner_id, access_token):
+        if class_id is not None:
+            class_row = _remote_table(access_token, "classpulse_classes").select("id,name").eq(
+                "owner_id", str(owner_id)
+            ).eq("id", int(class_id)).limit(1).execute().data or []
+            if not class_row or str(class_row[0]["name"]) != class_name:
+                raise ValueError("Choose a class owned by this signed-in account")
+            memberships = _remote_table(access_token, "classpulse_class_students").select(
+                "student_id"
+            ).eq("owner_id", str(owner_id)).eq("class_id", int(class_id)).execute().data or []
+            member_ids = {int(row["student_id"]) for row in memberships}
+        else:
+            member_ids = None
         student_rows = _remote_table(access_token, "classpulse_students").select(
             "id,student_code"
         ).eq("owner_id", str(owner_id)).execute().data or []
@@ -444,6 +456,8 @@ def save_attendance(
             match = by_id.get(int(student_ref)) if isinstance(student_ref, int) else by_code.get(code)
             if not match:
                 raise ValueError("attendance contains a student outside this owner's remote roster")
+            if member_ids is not None and int(match["id"]) not in member_ids:
+                raise ValueError("attendance contains a student who is not enrolled in this class")
             payload.append({
                 "owner_id": str(owner_id), "student_pk": int(match["id"]),
                 "session_date": normalized_date, "class_name": class_name,
@@ -451,9 +465,11 @@ def save_attendance(
             })
         try:
             if payload:
-                _remote_table(access_token, "classpulse_attendance_records").upsert(
+                saved = _remote_table(access_token, "classpulse_attendance_records").upsert(
                     payload, on_conflict="owner_id,student_pk,session_date,class_name"
-                ).execute()
+                ).select("id").execute().data or []
+                if len(saved) != len(payload):
+                    raise RuntimeError("Supabase did not confirm every attendance row.")
         except Exception as exc:
             raise RuntimeError("Attendance could not be saved to the Supabase database.") from exc
         return len(payload)
@@ -475,6 +491,19 @@ def save_attendance(
                 ).fetchone()
             if student is None:
                 raise ValueError("attendance contains a student code outside this owner's roster")
+            if class_id is not None:
+                class_row = db.execute(
+                    "SELECT name FROM classes WHERE owner_id = ? AND id = ?",
+                    (str(owner_id), int(class_id)),
+                ).fetchone()
+                membership = db.execute(
+                    "SELECT 1 FROM class_students WHERE owner_id = ? AND class_id = ? AND student_id = ?",
+                    (str(owner_id), int(class_id), int(student["id"])),
+                ).fetchone()
+                if not class_row or str(class_row["name"]) != class_name:
+                    raise ValueError("Choose a class owned by this signed-in account")
+                if not membership:
+                    raise ValueError("attendance contains a student who is not enrolled in this class")
             db.execute(
                 """INSERT INTO attendance_records(owner_id, student_pk, session_date, class_name, status, marked_at)
                    VALUES (?, ?, ?, ?, ?, ?)
@@ -586,9 +615,9 @@ def create_session(
     if engagement_score is not None and not 0 <= float(engagement_score) <= 100:
         raise ValueError("engagement_score must be between 0 and 100")
     timestamp = started_at or datetime.now(timezone.utc).isoformat(timespec="seconds")
-    # Remote sync is opt-in: it uploads only the explicit session summary fields,
-    # never source video/audio, student names, or biometric data.
-    if _supabase_sync_enabled() and access_token and _remote_user_id(owner_id):
+    # A Supabase login is the explicit opt-in to remote persistence. Never
+    # silently store a signed-in user's records in temporary hosted SQLite.
+    if _remote_roster_enabled(owner_id, access_token):
         try:
             result = _supabase_table(access_token).insert({
                 "owner_id": str(owner_id),
@@ -600,13 +629,15 @@ def create_session(
                 "engagement_score": None if engagement_score is None else float(engagement_score),
                 "participation_count": participation_count,
                 "summary": _remote_summary(summary or {}),
-            }).execute()
+            }).select("id").execute()
             data = getattr(result, "data", None) or []
             if data:
                 return data[0].get("id", 0)
-        except Exception:
-            # A remote outage or missing optional schema does not block local use.
-            pass
+        except Exception as exc:
+            raise RuntimeError("Session summary could not be saved to Supabase.") from exc
+        if not data:
+            raise RuntimeError("Supabase did not confirm the session summary save.")
+        return data[0].get("id", 0)
 
     with _connect() as db:
         cursor = db.execute(
@@ -627,14 +658,14 @@ def create_session(
 def list_sessions(owner_id: int | str, limit: int = 20, access_token: str | None = None) -> list[dict[str, Any]]:
     """Return recent session summaries for one authenticated owner."""
     limit = max(1, min(int(limit), 100))
-    if _supabase_sync_enabled() and access_token and _remote_user_id(owner_id):
+    if _remote_roster_enabled(owner_id, access_token):
         try:
             response = _supabase_table(access_token).select(
                 "id,class_name,started_at,ended_at,enrollment_count,attendance_count,engagement_score,participation_count,summary"
             ).order("started_at", desc=True).limit(limit).execute()
             return list(response.data or [])
-        except Exception:
-            pass
+        except Exception as exc:
+            raise RuntimeError("Session summaries could not be loaded from Supabase.") from exc
     with _connect() as db:
         rows = db.execute(
             """SELECT id, class_name, started_at, ended_at, enrollment_count,
@@ -663,7 +694,7 @@ def get_dashboard_data(
     # ``owner_id`` remains as a backwards-compatible alias.
     if user_id is None:
         user_id = owner_id
-    if user_id is not None and _supabase_sync_enabled() and access_token and _remote_user_id(user_id):
+    if user_id is not None and _remote_roster_enabled(user_id, access_token):
         sessions = list_sessions(user_id, limit=100, access_token=access_token)
         # A successful empty remote response should remain empty; a remote failure
         # already falls through to local lookup in list_sessions, so both paths work.
@@ -717,15 +748,6 @@ def delete_session(owner_id: int | str, session_id: int) -> bool:
         return cursor.rowcount > 0
 
 
-def _supabase_sync_enabled() -> bool:
-    return (
-        os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}
-        and bool(os.getenv("SUPABASE_URL", "").strip())
-        and bool(os.getenv("SUPABASE_ANON_KEY", "").strip())
-        and bool(importlib.util.find_spec("supabase"))
-    )
-
-
 def _remote_user_id(owner_id: int | str) -> bool:
     # Local SQLite IDs are numeric; Supabase Auth IDs are UUID strings.
     return isinstance(owner_id, str) and len(owner_id) >= 30
@@ -736,12 +758,16 @@ def _supabase_table(access_token: str):
 
 
 def _remote_roster_enabled(owner_id: int | str, access_token: str | None) -> bool:
-    return bool(access_token and _remote_user_id(owner_id) and _supabase_sync_enabled())
+    # If an authenticated Supabase session exists, use remote storage or fail
+    # clearly; do not claim success by writing to ephemeral local storage.
+    return bool(access_token and _remote_user_id(owner_id))
 
 
 def _remote_table(access_token: str | None, table_name: str):
     if not access_token:
         raise RuntimeError("A signed-in Supabase session is required for remote storage.")
+    if not os.getenv("SUPABASE_URL", "").strip() or not os.getenv("SUPABASE_ANON_KEY", "").strip():
+        raise RuntimeError("Supabase storage is not configured. Set SUPABASE_URL and the publishable/anon key in Streamlit Secrets.")
     try:
         from supabase import create_client  # type: ignore[import-not-found]
     except ImportError as exc:

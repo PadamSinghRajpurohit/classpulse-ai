@@ -93,7 +93,6 @@ def _uses_persistent_supabase_storage(user: Any) -> bool:
         isinstance(user, dict)
         and user.get("backend") == "supabase"
         and getattr(user, "access_token", None)
-        and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}
         and os.getenv("SUPABASE_URL", "").strip()
         and os.getenv("SUPABASE_ANON_KEY", "").strip()
     )
@@ -106,8 +105,6 @@ def _supabase_setup_hint(user: Any = None) -> str:
     missing = [name for name in ("SUPABASE_URL", "SUPABASE_ANON_KEY") if not os.getenv(name, "").strip()]
     if missing:
         return "Add " + " and ".join(f"`{name}`" for name in missing) + " to Streamlit App Secrets."
-    if os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() not in {"1", "true", "yes"}:
-        return 'Set `SUPABASE_SYNC_ENABLED="true"` in Streamlit App Secrets to save class and attendance data there.'
     if not importlib.util.find_spec("supabase"):
         return "The Supabase Python package is missing from this deployment. Redeploy after installing the Streamlit requirements."
     if isinstance(user, dict) and user.get("backend") != "supabase":
@@ -395,7 +392,7 @@ def _render_attendance(data: dict[str, Any]) -> None:
             local_classes = storage.list_classes(owner_id, access_token=access_token) if storage is not None and owner_id is not None else []
         except Exception as exc:
             local_classes = []
-            if access_token and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}:
+            if access_token:
                 st.error("Supabase could not load this account’s classes. Apply the latest class-roster migration and check the project URL, anon key, and RLS permissions.")
                 st.caption(_safe_storage_error(exc))
             else:
@@ -403,35 +400,41 @@ def _render_attendance(data: dict[str, Any]) -> None:
                 st.caption(_safe_storage_error(exc))
         if not local_classes:
             st.info("Create a class first. Each class keeps its own roster and attendance history.")
+        with st.expander("Create another class", expanded=not bool(local_classes)):
             with st.form("create_local_class_form", clear_on_submit=True):
                 new_class = st.text_input("Class name", max_chars=100, placeholder="e.g. Grade 8 · Science")
                 create = st.form_submit_button("Create class", type="primary")
                 if create:
                     try:
-                        storage.create_class(owner_id, new_class, access_token=access_token)
+                        created_class_id = storage.create_class(owner_id, new_class, access_token=access_token)
+                        st.session_state["attendance_class_select"] = int(created_class_id)
                         st.success("Class created. Add its students below.")
                         st.rerun()
-                    except ValueError as exc:
+                    except (ValueError, RuntimeError) as exc:
                         st.error(str(exc))
-                    except RuntimeError as exc:
-                        st.error(str(exc))
-                    except Exception:
+                    except Exception as exc:
                         st.error("Class could not be saved. Check the database configuration and try again.")
-            class_name = ""
-        else:
-            selected = st.selectbox(
+                        st.caption(_safe_storage_error(exc))
+        if local_classes:
+            classes_by_id = {int(item["id"]): item for item in local_classes}
+            class_ids = list(classes_by_id)
+            if st.session_state.get("attendance_class_select") not in class_ids:
+                st.session_state["attendance_class_select"] = class_ids[0]
+            selected_class_id = st.selectbox(
                 "Class",
-                local_classes,
-                format_func=lambda row: row["name"],
+                class_ids,
+                format_func=lambda value: classes_by_id[int(value)]["name"],
                 key="attendance_class_select",
             )
-            class_id = int(selected["id"])
-            class_name = selected["name"]
+            class_id = int(selected_class_id)
+            class_name = classes_by_id[class_id]["name"]
+        else:
+            class_name = ""
     controls = st.columns([1, 1.6])
     with controls[0]:
         session_date = st.date_input("Session date", value=date.today(), key="attendance_session_date")
     with controls[1]:
-        st.markdown("<div class='privacy-note'>Camera frames are analyzed in your browser; only an approximate count returns to this app. Supabase-authenticated accounts use their own Supabase project when sync is enabled; local accounts use SQLite.</div>", unsafe_allow_html=True)
+        st.markdown("<div class='privacy-note'>Camera frames are analyzed in your browser; only an approximate count returns to this app. Supabase-authenticated accounts save classes, rosters, and attendance to their configured Supabase project; local accounts use SQLite.</div>", unsafe_allow_html=True)
 
     if is_demo:
         st.info("Demo roster · example names and statuses only. Changes stay in this browser session and are not saved to the database.")
@@ -564,7 +567,10 @@ def _render_attendance(data: dict[str, Any]) -> None:
                             {"student_id": int(row.student_id), "present": row.status == "Present"}
                             for row in edited.itertuples(index=False)
                         ]
-                        storage.save_attendance(owner_id, session_date.isoformat(), class_name.strip(), records, access_token=access_token)
+                        storage.save_attendance(
+                            owner_id, session_date.isoformat(), class_name.strip(), records,
+                            access_token=access_token, class_id=class_id,
+                        )
                         st.success("Attendance saved for this class and date.")
                         st.rerun()
                     except Exception as exc:
