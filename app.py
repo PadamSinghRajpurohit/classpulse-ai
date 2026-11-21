@@ -604,32 +604,40 @@ def _render_session() -> None:
                     key="session_head_orientation_opt_in",
                     help="Off by default. Provides a camera-relative head-angle proxy, not gaze or attention. See the model and Google metrics notice above.",
                 )
-            audio_source = st.radio(
-                "Audio source (choose one)",
-                ["No audio", "Upload an audio file", "Record with microphone"],
-                horizontal=True,
-                key="session_audio_source",
-                help="Upload and microphone recording are alternatives. Video remains optional.",
-            )
-            if audio_source == "Upload an audio file":
-                audio = st.file_uploader(
-                    "Choose an audio file",
-                    type=["wav", "mp3", "m4a", "ogg", "flac"],
-                    key="session_audio_upload",
-                )
-            elif audio_source == "Record with microphone":
-                if callable(getattr(st, "audio_input", None)):
-                    st.caption("Recording starts only when you press Record. The clip is temporarily sent to this app server for analysis; raw audio is not retained or sent to Gemini.")
-                    audio = st.audio_input(
-                        "Record a short audio clip",
-                        sample_rate=16000,
-                        key="session_microphone_audio",
-                        help="Press Record to grant microphone access, then stop when the clip is complete.",
-                    )
-                else:
-                    st.error("Microphone recording needs Streamlit 1.40 or newer. Update Streamlit, or choose the upload option instead.")
         else:
-            st.info("Confirm authorization and participant consent above before selecting a video/audio file or enabling the microphone.")
+            st.caption("Video upload is available after you confirm authorization and participant consent above.")
+
+        # Keep audio inputs discoverable before consent, while preventing file
+        # selection or microphone access until the instructor confirms it.
+        audio_source = st.radio(
+            "Audio input (optional)",
+            ["No audio", "Upload an audio file", "Record with microphone"],
+            horizontal=True,
+            key="session_audio_source",
+            help="Audio is analyzed only after you select a source and explicitly start analysis.",
+        )
+        if audio_source == "Upload an audio file":
+            audio = st.file_uploader(
+                "Choose an audio file",
+                type=["wav", "mp3", "m4a", "ogg", "flac"],
+                key="session_audio_upload",
+                disabled=not media_consent,
+                help="Confirm authorization and participant consent to enable audio file selection.",
+            )
+        elif audio_source == "Record with microphone":
+            if callable(getattr(st, "audio_input", None)):
+                st.caption("Microphone access starts only after consent and when you press Record. The clip is temporarily processed by this app server; raw audio is not stored or sent to Gemini.")
+                audio = st.audio_input(
+                    "Record a short audio clip",
+                    sample_rate=16000,
+                    key="session_microphone_audio",
+                    disabled=not media_consent,
+                    help="Confirm authorization and participant consent, then press Record to grant microphone access.",
+                )
+            else:
+                st.error("Microphone recording needs Streamlit 1.40 or newer. Update Streamlit, or choose the upload option instead.")
+        if not media_consent:
+            st.info("Audio source choices are shown for clarity. Confirm authorization and participant consent above to enable audio upload or microphone recording.")
         if video or audio:
             st.info("Media selected. Press Analyze to process it. Analysis is disabled until you confirm authorization and participant consent. Only aggregate session metrics can be saved; raw media is not retained.")
         gemini_available = bool(os.getenv("GEMINI_API_KEY"))
@@ -908,3 +916,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
