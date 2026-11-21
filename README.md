@@ -35,13 +35,13 @@ streamlit run app.py
 
 Open the local address printed by Streamlit, usually <http://localhost:8501>. Sign up, then use the sidebar to move between Overview, Attendance, Live session, Insights, and the AI teaching coach. Camera and microphone features request browser permission only when you start them. Allow access on `localhost` to use those features; manual attendance remains available without camera permission. The camera face count and microphone sound sampler are estimates, so review results before saving.
 
-The app starts in local mode: accounts and data use a local SQLite database, and no Gemini or Supabase key is needed for the core app. To enable the Gemini coach/quiz generator or Supabase sign-in and aggregate-summary sync, configure your own credentials as described below. Never copy the live keys from another deployment; keys are private, are not included in this repository, and each user must use their own.
+The app starts in **local-only mode**: accounts, roster, attendance, and session data use a SQLite database on the computer running the app (`data/classpulse.db`). No Gemini key, Supabase account, Vercel account, or other personal service is needed to install and use the core app. No data is sent to the repository owner. Leave the optional integrations unconfigured for local-only use.
 
 ### Run the same entrypoint used by Streamlit Community Cloud
 
 The hosted app uses `streamlit_cloud/app.py` as a small deployment entrypoint and `streamlit_cloud/requirements.txt` for dependencies. Locally, use `streamlit run app.py` from the repository root; it launches the same full app and uses the same dependency list. To mirror the hosted setup exactly, run `python -m pip install -r streamlit_cloud/requirements.txt` from the repository root, then run `streamlit run streamlit_cloud/app.py`.
 
-Streamlit Community Cloud and local mode share the application code, but their storage is not identical: local mode stores data in your computer's `data/classpulse.db`; Streamlit Cloud's local disk can reset during rebuilds. Configure Supabase for hosted authentication and persistent aggregate session summaries. Student roster and individual attendance rows remain in SQLite and are not synced to Supabase.
+Streamlit Community Cloud and local mode share the application code, but they do not store data in the same place. When you run `streamlit run app.py` on your computer, SQLite is stored on that computer. When you deploy to Streamlit Community Cloud, the app and SQLite file run on Streamlit's servers, and that local disk can reset during rebuilds; the data is not on your personal computer. For storage that stays on your own computer, use the local run instructions and do not deploy the app to a hosted service.
 
 ## Run locally
 
@@ -62,7 +62,7 @@ The local mode uses SQLite and does not require API keys, a Supabase account, or
 4. Save a session summary. For a Supabase Auth user, the app sends only aggregate counts, a group engagement score, class label, and approved summary codes to `classpulse_session_summaries`.
 5. Inspect hosted rows in the Supabase project's **Table Editor → public → classpulse_session_summaries**. The table has owner-only Row Level Security; the anon role has no table access.
 
-The current connected project is [PadamSinghRajpurohit's Supabase project](https://supabase.com/dashboard/project/thtohsposkmvvssffrlq). Never push `.env`; it contains private configuration and is ignored by Git.
+Never push `.env`; it can contain private configuration and is ignored by Git. This repository does not include or require the maintainer's Supabase credentials or project.
 
 ## Vercel preview
 
@@ -82,12 +82,12 @@ The **local Python session analyzer** can additionally match face bounding boxes
 
 The browser dashboard includes dark and light themes (dark is the default), a month selector, an attendance and engagement trend chart, local-time session details, and monthly CSV export. Session history is fetched in pages so the dashboard can display older months as well as recent sessions.
 
-## Optional free services
+## Optional integrations (not required for local-only use)
 
-- **Supabase:** Set `AUTH_BACKEND=supabase`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SYNC_ENABLED=true` in a local `.env` file or deployment secrets to enable Supabase Auth and hosted session-summary sync. Apply `supabase/schema.sql` in the Supabase SQL editor first. The app uses owner-only Row Level Security. Never add a service-role key to the app or repository. Supabase's free plan has quotas and may pause inactive projects; check the provider's current limits before deployment.
-- **Gemini:** Set `GEMINI_API_KEY` only if you choose to use optional summaries. The local rules work without it. Raw audio/video, frames, faces, and student identifiers must not be sent to Gemini. Only de-identified aggregate session metrics may be sent, and only after the user explicitly enables that action.
+- **Supabase (optional):** Supabase is not used in the default local setup. If you choose to enable it, create and configure your own Supabase project; never use another person's project or credentials. Only aggregate session summaries sync there; rosters and individual attendance stay in local SQLite. Apply `supabase/schema.sql` first and never use a service-role key in the app.
+- **Gemini (optional):** The teaching coach and quiz builder require a Gemini API key supplied by the person running the app. Without it, local attendance, analysis, dashboards, and manual workflows remain available. Do not send student names, contact details, grades, recordings, frames, or other identifying information to an AI service. Only submit non-identifying lesson topics/questions. API use is subject to Google's own terms and limits.
 
-Copy `.env.example` to `.env` for local configuration. The `supabase` Python package is included in `requirements-streamlit.txt`; local SQLite remains the default until Supabase credentials and sync are enabled. `.env` and Streamlit secrets are excluded from Git. GitHub should contain placeholders and setup instructions only, never live API keys.
+You do not need to create a `.env` file for local-only use. If you later choose an integration, copy `.env.example` to `.env` and enter only your own credentials. `.env` and Streamlit secrets are excluded from Git. The repository contains no live API keys or Supabase credentials.
 
 ## Privacy and security defaults
 
@@ -114,13 +114,12 @@ Copy `.env.example` to `.env` for local configuration. The `supabase` Python pac
 
 ## Deployment
 
-### Streamlit Community Cloud
+### Streamlit Community Cloud (optional hosted deployment)
 
 1. Push this repository to GitHub and open [share.streamlit.io](https://share.streamlit.io/).
 2. Choose **New app**, select `PadamSinghRajpurohit/classpulse-ai`, branch `main`, and set the main file path to `streamlit_cloud/app.py`.
 3. In **Advanced settings**, choose Python 3.12. Streamlit installs `streamlit_cloud/requirements.txt`, which includes the full local media and AI dependency set.
-4. Add secrets in the app's **Settings → Secrets** using `streamlit_cloud/secrets.example.toml` as a placeholder template. For hosted, persistent user accounts and session summaries, configure `AUTH_BACKEND`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SYNC_ENABLED` using the values for the Supabase project; apply `supabase/schema.sql` first. Never use the Supabase service-role key.
-5. Add `GEMINI_API_KEY` in Streamlit Secrets to enable the teaching coach and quiz builder. They use the Gemini 3.5 Flash-Lite text API by default (`GEMINI_MODEL` can override it). Gemini 2.5 Flash is restricted for new projects, so ClassPulse uses the current model instead. Keep the key in Streamlit Secrets, never in GitHub. Gemini's free tier has usage limits; Google's pricing page says free-tier submitted content may be used to improve products, so send only non-identifying lesson topics/questions. Review Google's current [Gemini API pricing and data terms](https://ai.google.dev/gemini-api/docs/pricing) before use.
+4. You can leave **Settings → Secrets** empty for local-mode authentication and SQLite inside the hosted app. Hosted SQLite is on Streamlit's servers and may be cleared; it is not storage on your computer. To keep all data on your own computer, run the app locally instead of deploying it.
+5. The AI coach and quiz builder are optional and need your own `GEMINI_API_KEY` in Streamlit Secrets. Do not copy someone else's key. The app uses `gemini-3.5-flash-lite` by default (`GEMINI_MODEL` can override it); model availability and free usage limits may change. Send only non-identifying lesson topics/questions. Review Google's current [Gemini API pricing and data terms](https://ai.google.dev/gemini-api/docs/pricing) before use.
 
-Streamlit Community Cloud's local SQLite filesystem may reset when the app is rebuilt or restarted. Use Supabase Auth and session-summary sync for persistent remote summaries. Roster/individual attendance still use local SQLite and should not be treated as durable in this hosted deployment. Free hosting and API quotas can change; do not upload real student recordings until privacy, retention, access, and consent have been reviewed.
-
+Streamlit Community Cloud runs the app on a hosted server; its local SQLite filesystem may reset when the app is rebuilt or restarted. This is separate from your computer. The repository does not connect to the maintainer's Supabase project. If you enable Supabase or Gemini in your own deployment, use your own account and credentials and review that provider's privacy, retention, access, and consent terms first.
