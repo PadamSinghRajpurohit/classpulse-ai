@@ -47,6 +47,7 @@ h1 { font-weight:800 !important; }
 [data-testid="stForm"] { border:0; padding:0; }
 [data-testid="stFormSubmitButton"] button[kind="primary"],button[kind="primary"] { background:linear-gradient(115deg,#785FF6,#5B45DF); border:0; box-shadow:0 7px 16px rgba(98,75,224,.16); }
 [data-testid="stFormSubmitButton"] button[kind="primary"]:hover,button[kind="primary"]:hover { background:linear-gradient(115deg,#6D53F0,#4F39D3); }
+[data-testid="stFormSubmitButton"] button,[data-testid="stBaseButton-primary"] { background:linear-gradient(115deg,#785FF6,#5B45DF) !important; color:#fff !important; border:0 !important; }
 [data-testid="stTextInput"] input,[data-testid="stDateInput"] input { border-radius:10px; }
 [data-testid="stDataFrame"] { border:1px solid var(--line); border-radius:10px; overflow:hidden; }
 @media (max-width:800px) { [data-testid="stMainBlockContainer"] { padding:1.2rem 1rem; } .auth-title { font-size:37px !important; } .metric-card { min-height:118px; padding:14px; } .metric-value { font-size:26px; } }
@@ -78,8 +79,10 @@ h1,h2,h3,h4,p,li,label,[data-testid="stMarkdownContainer"] { color:#E9ECF6; }
 }
 [data-testid="stDataFrame"] { border-color:#343A52; }
 [data-testid="stFileUploader"] section { color:#E9ECF6; background:#171B2C; border-color:#414762; }
-[data-testid="stAlert"] { color:#E9ECF6; }
+[data-testid="stAlert"] { color:#E9ECF6; background:#252A40 !important; border-color:#414762 !important; }
+[data-testid="stAlert"] p,[data-testid="stAlert"] [data-testid="stMarkdownContainer"] { color:#E9ECF6 !important; }
 [data-testid="stTabs"] button { color:#C5CADB; }
+[data-testid="stFormSubmitButton"] button,[data-testid="stBaseButton-primary"] { background:linear-gradient(115deg,#785FF6,#5B45DF) !important; color:#fff !important; border:0 !important; }
 button[kind="secondary"] { color:#E9ECF6; background:#252A40; border-color:#414762; }
 </style>
 """
