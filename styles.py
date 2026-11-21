@@ -79,8 +79,12 @@ h1,h2,h3,h4,p,li,label,[data-testid="stMarkdownContainer"] { color:#E9ECF6; }
 }
 [data-testid="stDataFrame"] { border-color:#343A52; }
 [data-testid="stFileUploader"] section { color:#E9ECF6; background:#171B2C; border-color:#414762; }
-[data-testid="stAlert"] { color:#E9ECF6; background:#252A40 !important; border-color:#414762 !important; }
-[data-testid="stAlert"] p,[data-testid="stAlert"] [data-testid="stMarkdownContainer"] { color:#E9ECF6 !important; }
+[data-testid*="stAlert"], [data-testid*="Notification"], [role="alert"], .stAlert {
+  color:#E9ECF6 !important; background:#252A40 !important; border-color:#414762 !important;
+}
+[data-testid*="stAlert"] *, [data-testid*="Notification"] *, [role="alert"] *, .stAlert * {
+  color:#E9ECF6 !important; background-color:transparent !important;
+}
 [data-testid="stTabs"] button { color:#C5CADB; }
 [data-testid="stFormSubmitButton"] button,[data-testid="stBaseButton-primary"] { background:linear-gradient(115deg,#785FF6,#5B45DF) !important; color:#fff !important; border:0 !important; }
 button[kind="secondary"] { color:#E9ECF6; background:#252A40; border-color:#414762; }
