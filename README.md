@@ -37,6 +37,8 @@ Open the local address printed by Streamlit, usually <http://localhost:8501>. Si
 
 The app starts in **local-only mode**: accounts, roster, attendance, and session data use a SQLite database on the computer running the app (`data/classpulse.db`). No Gemini key, Supabase account, Vercel account, or other personal service is needed to install and use the core app. No data is sent to the repository owner. Leave the optional integrations unconfigured for local-only use.
 
+**For private, local storage, clone the repository and run it on your computer.** A public Streamlit or Vercel URL runs on that hosting provider's servers; it does not store data on the visitor's phone or computer. Treat the public hosted demo as a demo, and do not enter private student information there.
+
 ### Run the same entrypoint used by Streamlit Community Cloud
 
 The hosted app uses `streamlit_cloud/app.py` as a small deployment entrypoint and `streamlit_cloud/requirements.txt` for dependencies. Locally, use `streamlit run app.py` from the repository root; it launches the same full app and uses the same dependency list. To mirror the hosted setup exactly, run `python -m pip install -r streamlit_cloud/requirements.txt` from the repository root, then run `streamlit run streamlit_cloud/app.py`.
@@ -123,3 +125,4 @@ You do not need to create a `.env` file for local-only use. If you later choose 
 5. The AI coach and quiz builder are optional and need your own `GEMINI_API_KEY` in Streamlit Secrets. Do not copy someone else's key. The app uses `gemini-3.5-flash-lite` by default (`GEMINI_MODEL` can override it); model availability and free usage limits may change. Send only non-identifying lesson topics/questions. Review Google's current [Gemini API pricing and data terms](https://ai.google.dev/gemini-api/docs/pricing) before use.
 
 Streamlit Community Cloud runs the app on a hosted server; its local SQLite filesystem may reset when the app is rebuilt or restarted. This is separate from your computer. The repository does not connect to the maintainer's Supabase project. If you enable Supabase or Gemini in your own deployment, use your own account and credentials and review that provider's privacy, retention, access, and consent terms first.
+
