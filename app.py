@@ -254,7 +254,7 @@ def _render_overview(data: dict[str, Any]) -> None:
     st.markdown("A clear read on today’s attendance and engagement signals.")
     cols = st.columns(4)
     with cols[0]: _metric_card("ATTENDANCE RATE", f"{metrics.get('attendance_rate', 84)}%", f"{metrics.get('present_count', 126)} of {metrics.get('student_count', 150)} roster entries present")
-    with cols[1]: _metric_card("CLASS ENGAGEMENT", f"{metrics.get('engagement_score', 78)}<small>/100</small>", "Group-level estimate · review before acting", "mint")
+    with cols[1]: _metric_card("CLASS ENGAGEMENT", f"{metrics.get('engagement_score', 78)} /100", "Group-level estimate · review before acting", "mint")
     with cols[2]: _metric_card("PARTICIPATION", str(metrics.get("participation_count", 32)), "Contributions across recent sessions", "amber")
     with cols[3]: _metric_card("SESSIONS THIS WEEK", str(metrics.get("sessions_this_week", 12)), "Across your active classes", "blue")
 
