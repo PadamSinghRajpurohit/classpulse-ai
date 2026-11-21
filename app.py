@@ -223,7 +223,9 @@ def _sidebar(user: Any) -> str:
     with st.sidebar:
         st.markdown('<div class="sidebar-brand"><span class="brand-mark">CP</span><span>ClassPulse <b>AI</b></span></div>', unsafe_allow_html=True)
         st.caption("INSTRUCTOR WORKSPACE")
-        page = st.radio("Navigation", ["Overview", "Attendance", "Live session", "Insights"], label_visibility="collapsed")
+        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() not in {"1", "true", "yes"}:
+            st.warning("Hosted SQLite data can reset after a restart. Add Supabase Auth and session-sync secrets for durable summaries; avoid real rosters in this deployment.")
+        page = st.radio("Navigation", ["Overview", "Attendance", "Live session", "Insights", "AI teaching coach"], label_visibility="collapsed")
         st.markdown("<div class='sidebar-spacer'></div>", unsafe_allow_html=True)
         st.markdown('<div class="privacy-chip"><span class="privacy-dot"></span><div><b>Privacy first</b><small>Local analysis · No raw media saved</small></div></div>', unsafe_allow_html=True)
         st.divider()
@@ -231,6 +233,8 @@ def _sidebar(user: Any) -> str:
         if st.button("Sign out", use_container_width=True):
             st.session_state.user = None
             st.session_state.analysis_result = None
+            st.session_state.pop("teaching_chat_history", None)
+            st.session_state.pop("quiz_chat_history", None)
             st.rerun()
     return page
 
@@ -877,6 +881,8 @@ def main() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
     user = st.session_state.user
     if not user:
+        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() not in {"1", "true", "yes"}:
+            st.warning("Hosted SQLite data may reset after restarts. Configure Supabase Auth and session sync before using real class records.")
         _login_screen()
         return
     page = _sidebar(user)
@@ -889,6 +895,13 @@ def main() -> None:
         _render_attendance(data)
     elif page == "Live session":
         _render_session()
+    elif page == "AI teaching coach":
+        import ai_chatbot
+        from ai_chatbot_ui import render_teaching_chatbot
+
+        if not os.getenv("GEMINI_API_KEY", "").strip():
+            st.warning("Gemini is not configured. Add GEMINI_API_KEY in Streamlit Cloud → Settings → Secrets, or in your private local environment, to use the coach and quiz builder.")
+        render_teaching_chatbot(st, ai_chatbot)
     else:
         _render_insights(data)
 

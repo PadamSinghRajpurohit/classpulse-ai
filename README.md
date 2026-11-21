@@ -27,7 +27,7 @@ The current connected project is [PadamSinghRajpurohit's Supabase project](https
 
 The local Streamlit interface uses a persistent process and local SQLite, which does not fit Vercel's request-based Python Functions. Vercel therefore uses the lightweight, stateless WSGI app in `vercel_app.py` with the same Supabase Auth and owner-protected aggregate-summary table. The hosted preview records group totals only; it does not store student names, individual attendance rows, or uploaded media. Add `SUPABASE_URL` and the Supabase publishable key as Vercel project environment variables to enable sign-in and persistence. Do not add `GEMINI_API_KEY` unless you explicitly choose to run Gemini in that deployment.
 
-The Vercel runtime uses the standard-library-only `requirements.txt`; install the richer local Streamlit dependencies from `requirements-streamlit.txt`.
+The Vercel runtime uses the standard-library-only root `requirements.txt`. Streamlit Community Cloud has an isolated entrypoint and dependency file under `streamlit_cloud/`; this lets its full AI/media dependencies install without burdening the Vercel build.
 
 ### Install ClassPulse on a phone
 
@@ -65,10 +65,20 @@ Copy `.env.example` to `.env` for local configuration. The `supabase` Python pac
 - `auth.py` — sign-up and login
 - `storage.py` — local SQLite and optional Supabase data adapter
 - `ai_pipeline.py` — local multimodal signal analysis and recommendations
+- `streamlit_cloud/` — isolated Streamlit Community Cloud entrypoint and dependencies
+- `ai_chatbot.py` / `ai_chatbot_ui.py` — optional Gemini teaching coach and quiz builder
 - `.env.example` — configuration names with empty values
 - `supabase/schema.sql` — optional database schema and Row Level Security policies
 - `pyproject.toml` — Vercel Python entrypoint configuration
 
 ## Deployment
 
-Streamlit Community Cloud offers a free deployment option connected to GitHub. Add optional credentials through the deployment's secrets interface; the app reads those values without placing them in source. Hosted free plans have limits and are not a zero-cost production guarantee. Do not upload real student recordings until the deployment's privacy, retention, access, and consent requirements have been reviewed.
+### Streamlit Community Cloud
+
+1. Push this repository to GitHub and open [share.streamlit.io](https://share.streamlit.io/).
+2. Choose **New app**, select `PadamSinghRajpurohit/classpulse-ai`, branch `main`, and set the main file path to `streamlit_cloud/app.py`.
+3. In **Advanced settings**, choose Python 3.12. Streamlit installs `streamlit_cloud/requirements.txt`, which includes the full local media and AI dependency set.
+4. Add secrets in the app's **Settings → Secrets** using `streamlit_cloud/secrets.example.toml` as a placeholder template. For hosted, persistent user accounts and session summaries, configure `AUTH_BACKEND`, `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SYNC_ENABLED` using the values for the Supabase project; apply `supabase/schema.sql` first. Never use the Supabase service-role key.
+5. Add `GEMINI_API_KEY` in Streamlit Secrets to enable the teaching coach and quiz builder. They use the Gemini 2.5 Flash text API by default (`GEMINI_MODEL` can override it). Keep the key in Streamlit Secrets, never in GitHub. Gemini's free tier has usage limits; Google's pricing page says free-tier submitted content may be used to improve products, so send only non-identifying lesson topics/questions. Review Google's current [Gemini API pricing and data terms](https://ai.google.dev/gemini-api/docs/pricing) before use.
+
+Streamlit Community Cloud's local SQLite filesystem may reset when the app is rebuilt or restarted. Use Supabase Auth and session-summary sync for persistent remote summaries. Roster/individual attendance still use local SQLite and should not be treated as durable in this hosted deployment. Free hosting and API quotas can change; do not upload real student recordings until privacy, retention, access, and consent have been reviewed.
