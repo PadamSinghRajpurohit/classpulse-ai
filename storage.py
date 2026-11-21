@@ -186,8 +186,15 @@ def init_db() -> None:
             )
 
 
-def list_classes(owner_id: int | str) -> list[dict[str, Any]]:
+def list_classes(owner_id: int | str, access_token: str | None = None) -> list[dict[str, Any]]:
     """List this owner's local classes for attendance and session selection."""
+    if _remote_roster_enabled(owner_id, access_token):
+        _sync_legacy_local_roster(owner_id, access_token)
+        table = _remote_table(access_token, "classpulse_classes")
+        rows = table.select(
+            "id,name,created_at"
+        ).eq("owner_id", str(owner_id)).order("name").execute().data or []
+        return [dict(row) for row in rows]
     with _connect() as db:
         rows = db.execute(
             "SELECT id, name, created_at FROM classes WHERE owner_id = ? ORDER BY name COLLATE NOCASE",
@@ -196,11 +203,21 @@ def list_classes(owner_id: int | str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def create_class(owner_id: int | str, name: str) -> int:
+def create_class(owner_id: int | str, name: str, access_token: str | None = None) -> int:
     """Create an owner-scoped local class and return its ID."""
     normalized = (name or "").strip()
     if not normalized or len(normalized) > 100:
         raise ValueError("Class name is required and must be 100 characters or fewer")
+    if _remote_roster_enabled(owner_id, access_token):
+        try:
+            result = _remote_table(access_token, "classpulse_classes").insert(
+                {"owner_id": str(owner_id), "name": normalized}
+            ).execute().data or []
+        except Exception as exc:
+            raise RuntimeError("Class storage is unavailable. Confirm the ClassPulse Supabase migration has been applied.") from exc
+        if not result:
+            raise RuntimeError("Class storage returned no saved class.")
+        return int(result[0]["id"])
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _connect() as db:
         try:
@@ -213,8 +230,19 @@ def create_class(owner_id: int | str, name: str) -> int:
         return int(cursor.lastrowid)
 
 
-def list_students(owner_id: int | str, class_id: int | None = None) -> list[dict[str, Any]]:
+def list_students(owner_id: int | str, class_id: int | None = None, access_token: str | None = None) -> list[dict[str, Any]]:
     """List an owner's roster, optionally limited to one class membership."""
+    if _remote_roster_enabled(owner_id, access_token):
+        table = _remote_table(access_token, "classpulse_students")
+        if class_id is None:
+            rows = table.select("id,student_code,name,created_at").eq("owner_id", str(owner_id)).order("name").execute().data or []
+        else:
+            memberships = _remote_table(access_token, "classpulse_class_students").select(
+                "student_id"
+            ).eq("owner_id", str(owner_id)).eq("class_id", int(class_id)).execute().data or []
+            ids = [int(row["student_id"]) for row in memberships]
+            rows = table.select("id,student_code,name,created_at").eq("owner_id", str(owner_id)).in_("id", ids).order("name").execute().data if ids else []
+        return [dict(row) for row in (rows or [])]
     with _connect() as db:
         if class_id is None:
             rows = db.execute(
@@ -233,8 +261,13 @@ def list_students(owner_id: int | str, class_id: int | None = None) -> list[dict
     return [dict(row) for row in rows]
 
 
-def list_unenrolled_students(owner_id: int | str, class_id: int) -> list[dict[str, Any]]:
+def list_unenrolled_students(owner_id: int | str, class_id: int, access_token: str | None = None) -> list[dict[str, Any]]:
     """List existing local students who are not yet members of this class."""
+    if _remote_roster_enabled(owner_id, access_token):
+        students = list_students(owner_id, access_token=access_token)
+        members = list_students(owner_id, class_id, access_token=access_token)
+        member_ids = {int(row["id"]) for row in members}
+        return [row for row in students if int(row["id"]) not in member_ids]
     with _connect() as db:
         rows = db.execute(
             "SELECT s.id, s.student_code, s.name FROM students AS s "
@@ -248,8 +281,16 @@ def list_unenrolled_students(owner_id: int | str, class_id: int) -> list[dict[st
     return [dict(row) for row in rows]
 
 
-def enroll_student(owner_id: int | str, class_id: int, student_id: int) -> bool:
+def enroll_student(owner_id: int | str, class_id: int, student_id: int, access_token: str | None = None) -> bool:
     """Enroll an existing local student in another local class."""
+    if _remote_roster_enabled(owner_id, access_token):
+        try:
+            result = _remote_table(access_token, "classpulse_class_students").upsert({
+                "owner_id": str(owner_id), "class_id": int(class_id), "student_id": int(student_id),
+            }, on_conflict="class_id,student_id").execute()
+            return bool(getattr(result, "data", None))
+        except Exception as exc:
+            raise RuntimeError("Student could not be enrolled in the remote class roster.") from exc
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with _connect() as db:
         class_exists = db.execute(
@@ -267,8 +308,13 @@ def enroll_student(owner_id: int | str, class_id: int, student_id: int) -> bool:
         return cursor.rowcount > 0
 
 
-def remove_student_from_class(owner_id: int | str, class_id: int, student_id: int) -> bool:
+def remove_student_from_class(owner_id: int | str, class_id: int, student_id: int, access_token: str | None = None) -> bool:
     """Remove a student from one class while keeping their other class data."""
+    if _remote_roster_enabled(owner_id, access_token):
+        result = _remote_table(access_token, "classpulse_class_students").delete().eq(
+            "owner_id", str(owner_id)
+        ).eq("class_id", int(class_id)).eq("student_id", int(student_id)).execute()
+        return bool(getattr(result, "data", None))
     with _connect() as db:
         cursor = db.execute(
             "DELETE FROM class_students WHERE owner_id = ? AND class_id = ? AND student_id = ?",
@@ -284,6 +330,7 @@ def add_student(
     *,
     student_id: str | None = None,
     class_id: int | None = None,
+    access_token: str | None = None,
 ) -> int:
     """Add a local roster entry and return its local integer ID.
 
@@ -299,6 +346,23 @@ def add_student(
     if not code or len(code) > 64:
         raise ValueError("Student code is required and must be 64 characters or fewer")
     timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if _remote_roster_enabled(owner_id, access_token):
+        try:
+            result = _remote_table(access_token, "classpulse_students").insert({
+                "owner_id": str(owner_id), "student_code": code,
+                "name": normalized_name, "created_at": timestamp,
+            }).execute().data or []
+            if not result:
+                raise RuntimeError("Student storage returned no saved roster row.")
+            new_student_id = int(result[0]["id"])
+            if class_id is not None:
+                _remote_table(access_token, "classpulse_class_students").insert({
+                    "owner_id": str(owner_id), "class_id": int(class_id),
+                    "student_id": new_student_id,
+                }).execute()
+            return new_student_id
+        except Exception as exc:
+            raise ValueError("Student could not be saved. Check for a duplicate roster code and verify the Supabase migration.") from exc
     with _connect() as db:
         try:
             cursor = db.execute(
@@ -327,6 +391,7 @@ def save_attendance(
     session_date: str,
     class_name: str,
     rows: list[dict[str, Any]],
+    access_token: str | None = None,
 ) -> int:
     """Upsert manual statuses for one local roster, class, and ISO date.
 
@@ -367,6 +432,31 @@ def save_attendance(
         normalized_rows.append((code or f"#id:{student_ref}", status))
 
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if _remote_roster_enabled(owner_id, access_token):
+        student_rows = _remote_table(access_token, "classpulse_students").select(
+            "id,student_code"
+        ).eq("owner_id", str(owner_id)).execute().data or []
+        by_id = {int(row["id"]): row for row in student_rows}
+        by_code = {str(row["student_code"]): row for row in student_rows}
+        payload = []
+        for item, (code, status) in zip(rows, normalized_rows):
+            student_ref = item.get("student_id")
+            match = by_id.get(int(student_ref)) if isinstance(student_ref, int) else by_code.get(code)
+            if not match:
+                raise ValueError("attendance contains a student outside this owner's remote roster")
+            payload.append({
+                "owner_id": str(owner_id), "student_pk": int(match["id"]),
+                "session_date": normalized_date, "class_name": class_name,
+                "status": status, "marked_at": now,
+            })
+        try:
+            if payload:
+                _remote_table(access_token, "classpulse_attendance_records").upsert(
+                    payload, on_conflict="owner_id,student_pk,session_date,class_name"
+                ).execute()
+        except Exception as exc:
+            raise RuntimeError("Attendance could not be saved to the Supabase database.") from exc
+        return len(payload)
     with _connect() as db:
         for code, status in normalized_rows:
             if code.startswith("#id:"):
@@ -399,6 +489,7 @@ def list_attendance(
     owner_id: int | str,
     session_date: str | None = None,
     class_name: str | None = None,
+    access_token: str | None = None,
 ) -> list[dict[str, Any]]:
     """List this owner's local manual records, optionally filtered by date/class."""
     if session_date is not None:
@@ -406,6 +497,27 @@ def list_attendance(
             session_date = datetime.strptime(session_date, "%Y-%m-%d").date().isoformat()
         except (TypeError, ValueError) as exc:
             raise ValueError("session_date must use YYYY-MM-DD format") from exc
+    if _remote_roster_enabled(owner_id, access_token):
+        query = _remote_table(access_token, "classpulse_attendance_records").select(
+            "id,student_pk,session_date,class_name,status,marked_at"
+        ).eq("owner_id", str(owner_id))
+        if session_date is not None:
+            query = query.eq("session_date", session_date)
+        if class_name is not None:
+            query = query.eq("class_name", class_name.strip())
+        rows = query.order("session_date", desc=True).execute().data or []
+        ids = list({int(row["student_pk"]) for row in rows})
+        students = _remote_table(access_token, "classpulse_students").select(
+            "id,student_code,name"
+        ).eq("owner_id", str(owner_id)).in_("id", ids).execute().data if ids else []
+        by_id = {int(row["id"]): row for row in (students or [])}
+        return [{
+            **row,
+            "student_id": int(row["student_pk"]),
+            "student_code": by_id.get(int(row["student_pk"]), {}).get("student_code", ""),
+            "student_name": by_id.get(int(row["student_pk"]), {}).get("name", "Student"),
+            "present": row["status"] in {"present", "late"},
+        } for row in rows]
     query = """SELECT a.session_date, a.class_name, a.student_pk AS student_id,
                       s.student_code, s.name AS student_name, a.status,
                       (a.status IN ('present', 'late')) AS present, a.marked_at
@@ -422,11 +534,19 @@ def list_attendance(
     query += " ORDER BY a.session_date DESC, s.name COLLATE NOCASE"
     with _connect() as db:
         rows = db.execute(query, parameters).fetchall()
-    return [dict(row) for row in rows]
+    records = [dict(row) for row in rows]
+    for record in records:
+        record["present"] = bool(record["present"])
+    return records
 
 
-def delete_student(owner_id: int | str, student_id: int) -> bool:
+def delete_student(owner_id: int | str, student_id: int, access_token: str | None = None) -> bool:
     """Remove one local roster entry owned by this user and its attendance rows."""
+    if _remote_roster_enabled(owner_id, access_token):
+        result = _remote_table(access_token, "classpulse_students").delete().eq(
+            "owner_id", str(owner_id)
+        ).eq("id", int(student_id)).execute()
+        return bool(getattr(result, "data", None))
     with _connect() as db:
         cursor = db.execute("DELETE FROM students WHERE owner_id = ? AND id = ?", (str(owner_id), int(student_id)))
         return cursor.rowcount > 0
@@ -612,6 +732,16 @@ def _remote_user_id(owner_id: int | str) -> bool:
 
 
 def _supabase_table(access_token: str):
+    return _remote_table(access_token, "classpulse_session_summaries")
+
+
+def _remote_roster_enabled(owner_id: int | str, access_token: str | None) -> bool:
+    return bool(access_token and _remote_user_id(owner_id) and _supabase_sync_enabled())
+
+
+def _remote_table(access_token: str | None, table_name: str):
+    if not access_token:
+        raise RuntimeError("A signed-in Supabase session is required for remote storage.")
     try:
         from supabase import create_client  # type: ignore[import-not-found]
     except ImportError as exc:
@@ -621,7 +751,67 @@ def _supabase_table(access_token: str):
     client.postgrest.auth(access_token)
     # Namespace the remote table so enabling ClassPulse cannot collide with
     # unrelated data in a Supabase project the user already owns.
-    return client.table("classpulse_session_summaries")
+    return client.table(table_name)
+
+
+def _sync_legacy_local_roster(owner_id: int | str, access_token: str) -> None:
+    """Copy this user's old SQLite roster once when the remote roster is empty."""
+    migrations = _remote_table(access_token, "classpulse_data_migrations")
+    marker = migrations.select("migration_key").eq(
+        "owner_id", str(owner_id)
+    ).eq("migration_key", "sqlite_roster_v1").limit(1).execute().data or []
+    if marker:
+        return
+    local_classes = list_classes(owner_id)
+    local_students = list_students(owner_id)
+    local_attendance = list_attendance(owner_id)
+    classes = _remote_table(access_token, "classpulse_classes")
+    students = _remote_table(access_token, "classpulse_students")
+    class_students = _remote_table(access_token, "classpulse_class_students")
+    attendance = _remote_table(access_token, "classpulse_attendance_records")
+    if local_classes:
+        classes.upsert([
+            {"owner_id": str(owner_id), "name": row["name"], "created_at": row["created_at"]}
+            for row in local_classes
+        ], on_conflict="owner_id,name").execute()
+    remote_classes = classes.select("id,name").eq("owner_id", str(owner_id)).execute().data or []
+    class_ids = {str(row["name"]): int(row["id"]) for row in remote_classes}
+    if local_students:
+        students.upsert([
+            {"owner_id": str(owner_id), "student_code": row["student_code"], "name": row["name"], "created_at": row["created_at"]}
+            for row in local_students
+        ], on_conflict="owner_id,student_code").execute()
+    remote_students = students.select("id,student_code").eq("owner_id", str(owner_id)).execute().data or []
+    student_ids = {str(row["student_code"]): int(row["id"]) for row in remote_students}
+    local_class_ids = {int(row["id"]): str(row["name"]) for row in local_classes}
+    local_student_ids = {int(row["id"]): str(row["student_code"]) for row in local_students}
+    memberships = []
+    for row in local_classes:
+        for student in list_students(owner_id, int(row["id"])):
+            remote_student_id = student_ids.get(str(student["student_code"]))
+            if remote_student_id is not None:
+                memberships.append({
+                    "owner_id": str(owner_id), "class_id": class_ids[str(row["name"])],
+                    "student_id": remote_student_id,
+                })
+    if memberships:
+        class_students.upsert(memberships, on_conflict="class_id,student_id").execute()
+    if local_attendance:
+        attendance.upsert([
+            {
+                "owner_id": str(owner_id),
+                "student_pk": student_ids[local_student_ids[int(row["student_id"])]],
+                "session_date": row["session_date"],
+                "class_name": row["class_name"],
+                "status": row["status"],
+                "marked_at": row["marked_at"],
+            }
+            for row in local_attendance
+            if int(row["student_id"]) in local_student_ids and row["class_name"] in class_ids
+        ], on_conflict="owner_id,student_pk,session_date,class_name").execute()
+    migrations.upsert({
+        "owner_id": str(owner_id), "migration_key": "sqlite_roster_v1",
+    }, on_conflict="owner_id,migration_key").execute()
 
 
 def _remote_summary(summary: dict[str, Any]) -> dict[str, Any]:
