@@ -52,3 +52,35 @@ h1 { font-weight:800 !important; }
 @media (max-width:800px) { [data-testid="stMainBlockContainer"] { padding:1.2rem 1rem; } .auth-title { font-size:37px !important; } .metric-card { min-height:118px; padding:14px; } .metric-value { font-size:26px; } }
 </style>
 """
+
+
+DARK_THEME_CSS = r"""
+<style>
+:root { color-scheme: dark; --ink:#EDF0FA; --muted:#A0A8BE; --line:#343A52; }
+html, body, [class*="css"] { color:#E9ECF6; }
+.stApp { background:radial-gradient(ellipse at 7% 0%,rgba(99,77,190,.17),transparent 34%),linear-gradient(140deg,#101321 0%,#171B2C 100%); color:#E9ECF6; }
+[data-testid="stHeader"] { background:rgba(16,19,33,.82); }
+[data-testid="stMain"] { color:#E9ECF6; }
+h1,h2,h3,h4,p,li,label,[data-testid="stMarkdownContainer"] { color:#E9ECF6; }
+[data-testid="stVerticalBlockBorderWrapper"] { border-color:#343A52 !important; background:rgba(29,34,52,.92); box-shadow:0 8px 28px rgba(0,0,0,.18); }
+[data-testid="stMetric"], .metric-card { background:#20253A; border-color:#343A52; }
+.metric-label,.metric-note,.metric-value small { color:#A0A8BE; }
+.metric-value { color:#F0F2FB; }
+.page-kicker { color:#B5A9FF; }
+.privacy-note { color:#D3D7E7; background:#25243A; border-color:#454063; }
+.auth-title,.brand-lockup { color:#F0F2FB; }
+.auth-copy,.auth-footer { color:#A0A8BE; }
+.auth-divider { color:#A0A8BE; }
+.auth-divider:before,.auth-divider:after { background:#343A52; }
+[data-testid="stTextInput"] input,[data-testid="stTextArea"] textarea,[data-testid="stNumberInput"] input,[data-testid="stDateInput"] input,
+[data-testid="stSelectbox"] [role="combobox"],[data-testid="stMultiSelect"] [role="combobox"] {
+  color:#F0F2FB !important; background:#171B2C !important; border-color:#414762 !important;
+}
+[data-testid="stDataFrame"] { border-color:#343A52; }
+[data-testid="stFileUploader"] section { color:#E9ECF6; background:#171B2C; border-color:#414762; }
+[data-testid="stAlert"] { color:#E9ECF6; }
+[data-testid="stTabs"] button { color:#C5CADB; }
+button[kind="secondary"] { color:#E9ECF6; background:#252A40; border-color:#414762; }
+</style>
+"""
+
