@@ -39,7 +39,7 @@ try:
 except ImportError:  # Services are optional while the UI is being previewed.
     auth = None  # type: ignore[assignment]
 try:
-    import storage
+    import classpulse_storage as storage
 except ImportError:
     storage = None  # type: ignore[assignment]
 try:
