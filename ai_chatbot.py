@@ -82,9 +82,12 @@ def respond(mode: str, prompt: str, history: list[dict[str, Any]] | None = None)
         },
     }
     request = urllib.request.Request(
-        f"{API_BASE}/{model}:generateContent?key={_api_key()}",
+        f"{API_BASE}/{model}:generateContent",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": _api_key(),
+        },
         method="POST",
     )
     try:
