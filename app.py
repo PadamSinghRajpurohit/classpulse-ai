@@ -99,6 +99,24 @@ def _uses_persistent_supabase_storage(user: Any) -> bool:
     )
 
 
+def _supabase_setup_hint(user: Any = None) -> str:
+    """Explain which hosted setting is missing without displaying its value."""
+    if os.getenv("AUTH_BACKEND", "local").strip().casefold() != "supabase":
+        return 'Set `AUTH_BACKEND="supabase"` in Streamlit App Secrets to use Supabase sign-in.'
+    missing = [name for name in ("SUPABASE_URL", "SUPABASE_ANON_KEY") if not os.getenv(name, "").strip()]
+    if missing:
+        return "Add " + " and ".join(f"`{name}`" for name in missing) + " to Streamlit App Secrets."
+    if os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() not in {"1", "true", "yes"}:
+        return 'Set `SUPABASE_SYNC_ENABLED="true"` in Streamlit App Secrets to save class and attendance data there.'
+    if not importlib.util.find_spec("supabase"):
+        return "The Supabase Python package is missing from this deployment. Redeploy after installing the Streamlit requirements."
+    if isinstance(user, dict) and user.get("backend") != "supabase":
+        return "This session is a local account. Sign out and sign in with an account created through Supabase Auth."
+    if isinstance(user, dict) and not getattr(user, "access_token", None):
+        return "This session has no Supabase access token. Sign out, then sign in again."
+    return "Supabase settings are present. Check the owner-scoped migration and database error details below."
+
+
 def _safe_storage_error(exc: Exception) -> str:
     """Return a short diagnostic without leaking credentials or request headers."""
     message = str(exc).replace("\n", " ").strip()
@@ -191,8 +209,9 @@ def _dashboard_data(user: Any) -> dict[str, Any]:
                     ],
                     "insights": [],
                 }
-        except Exception:
+        except Exception as exc:
             st.warning("Your saved dashboard data could not be loaded. Check the signed-in account's storage configuration and refresh.")
+            st.caption(_safe_storage_error(exc))
     return {
         "metrics": {"attendance_rate": 0, "present_count": 0, "student_count": 0,
                     "engagement_score": "—", "participation_count": 0, "sessions_this_week": 0},
@@ -281,7 +300,7 @@ def _sidebar(user: Any) -> str:
             elif _uses_persistent_supabase_storage(user):
                 st.success("Your class roster, attendance, and session summaries use your Supabase account.")
             else:
-                st.warning("This account is using hosted SQLite. Streamlit may reset it after a restart. Configure Supabase Auth and sync in private App Secrets for durable class data.")
+                st.warning("This account is not using durable Supabase storage. " + _supabase_setup_hint(user))
         page = st.radio("Navigation", ["Overview", "Attendance", "Live session", "Insights", "AI teaching coach"], label_visibility="collapsed")
         st.markdown("<div class='sidebar-spacer'></div>", unsafe_allow_html=True)
         st.toggle("Dark mode", key="dark_mode", help="Switch between dark and light appearance.")
@@ -434,9 +453,10 @@ def _render_attendance(data: dict[str, Any]) -> None:
     else:
         try:
             roster = storage.list_students(owner_id, class_id, access_token=access_token) if storage is not None and owner_id is not None and class_id is not None else []
-        except Exception:
+        except Exception as exc:
             roster = []
-            st.error("The local roster could not be loaded. Check the database setup and refresh.")
+            st.error("The roster could not be loaded. Check the account’s database setup and refresh.")
+            st.caption(_safe_storage_error(exc))
 
     if not is_demo and class_id is not None:
         with st.expander("Manage this class roster", expanded=not bool(roster)):
@@ -964,13 +984,8 @@ def main() -> None:
             st.toggle("Dark mode", key="dark_mode", help="Switch between dark and light appearance.")
         if st.session_state.dark_mode:
             st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
-        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and not (
-            os.getenv("AUTH_BACKEND", "local").strip().casefold() == "supabase"
-            and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}
-            and os.getenv("SUPABASE_URL", "").strip()
-            and os.getenv("SUPABASE_ANON_KEY", "").strip()
-        ):
-            st.warning("Hosted accounts and class data may reset while SQLite mode is selected. Configure your own Supabase Auth and sync in private App Secrets for durable data.")
+        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and not _uses_persistent_supabase_storage(None):
+            st.warning("Hosted local data may reset after a restart. " + _supabase_setup_hint())
         _login_screen()
         return
     page = _sidebar(user)
