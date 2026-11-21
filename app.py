@@ -7,6 +7,7 @@ from io import BytesIO
 import importlib
 import os
 import hashlib
+import re
 from typing import Any
 
 import pandas as pd
@@ -96,6 +97,20 @@ def _uses_persistent_supabase_storage(user: Any) -> bool:
         and os.getenv("SUPABASE_URL", "").strip()
         and os.getenv("SUPABASE_ANON_KEY", "").strip()
     )
+
+
+def _safe_storage_error(exc: Exception) -> str:
+    """Return a short diagnostic without leaking credentials or request headers."""
+    message = str(exc).replace("\n", " ").strip()
+    for secret_name in ("SUPABASE_ANON_KEY", "GEMINI_API_KEY"):
+        secret = os.getenv(secret_name, "").strip()
+        if secret:
+            message = message.replace(secret, "[redacted]")
+    token = getattr(st.session_state.get("user"), "access_token", None)
+    if token:
+        message = message.replace(token, "[redacted]")
+    message = re.sub(r"https://[a-z0-9-]+\.supabase\.co", "[Supabase project URL]", message, flags=re.I)
+    return f"{type(exc).__name__}: {message[:240]}" if message else type(exc).__name__
 
 
 def _fallback_data() -> dict[str, Any]:
@@ -359,12 +374,14 @@ def _render_attendance(data: dict[str, Any]) -> None:
     else:
         try:
             local_classes = storage.list_classes(owner_id, access_token=access_token) if storage is not None and owner_id is not None else []
-        except Exception:
+        except Exception as exc:
             local_classes = []
             if access_token and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() in {"1", "true", "yes"}:
-                st.error("Supabase class tables could not be loaded. Check that the latest class-roster migration is applied to your project.")
+                st.error("Supabase could not load this account’s classes. Apply the latest class-roster migration and check the project URL, anon key, and RLS permissions.")
+                st.caption(_safe_storage_error(exc))
             else:
                 st.error("Local classes could not be loaded. Check database setup and refresh.")
+                st.caption(_safe_storage_error(exc))
         if not local_classes:
             st.info("Create a class first. Each class keeps its own roster and attendance history.")
             with st.form("create_local_class_form", clear_on_submit=True):
@@ -437,8 +454,9 @@ def _render_attendance(data: dict[str, Any]) -> None:
                             storage.add_student(owner_id, new_name.strip(), new_code.strip(), class_id=class_id, access_token=access_token)
                             st.success("Student added to this class roster.")
                             st.rerun()
-                        except Exception:
-                            st.error("Student could not be added. Check for a duplicate roster code and try again.")
+                        except Exception as exc:
+                            st.error("Student could not be saved. Check for a duplicate roster code and confirm the database migration is active.")
+                            st.caption(_safe_storage_error(exc))
             if class_id is not None:
                 try:
                     unenrolled = storage.list_unenrolled_students(owner_id, class_id, access_token=access_token)
@@ -462,9 +480,15 @@ def _render_attendance(data: dict[str, Any]) -> None:
             except Exception:
                 st.warning("Could not load saved attendance for this date and class.")
         attendance_rows = []
+        selection_key = f"attendance_present_selection_{owner_id}_{class_id or class_name}_{session_date.isoformat()}"
+        applied_selection_key = f"attendance_selection_applied_{owner_id}_{class_id or class_name}_{session_date.isoformat()}"
+        selected_present_ids = st.session_state.get(selection_key)
+        applied_selection = bool(st.session_state.get(applied_selection_key))
         for row in roster:
             student_id = row.get("id")
             status = prior_status.get(str(student_id), row.get("status", "Unmarked") if is_demo else "Unmarked")
+            if applied_selection and selected_present_ids is not None:
+                status = "Present" if str(student_id) in selected_present_ids else "Absent"
             if status == "Review":
                 status = "Unmarked"
             attendance_rows.append({
@@ -473,6 +497,23 @@ def _render_attendance(data: dict[str, Any]) -> None:
                 "roster_code": row.get("student_code", ""),
                 "status": status if status in {"Present", "Absent", "Unmarked"} else "Unmarked",
             })
+        selection_names = {str(row.get("id")): row.get("name", "Student") for row in roster}
+        initially_present = [
+            str(row["student_id"]) for row in attendance_rows if row["status"] == "Present"
+        ]
+        with st.container(border=True):
+            st.subheader("Choose students present")
+            st.caption("Select names directly, apply the selection, then review each student’s status below before saving.")
+            st.multiselect(
+                "Present students",
+                options=[str(row.get("id")) for row in roster],
+                default=initially_present,
+                format_func=lambda value: selection_names.get(str(value), "Student"),
+                key=selection_key,
+            )
+            if st.button("Apply selected names", key=f"apply_attendance_selection_{owner_id}_{class_id or class_name}_{session_date.isoformat()}"):
+                st.session_state[applied_selection_key] = True
+                st.rerun()
         editor_id = hashlib.sha256(f"{owner_id}:{class_name}:{session_date.isoformat()}".encode()).hexdigest()[:12]
         edited = st.data_editor(
             pd.DataFrame(attendance_rows),
@@ -506,8 +547,9 @@ def _render_attendance(data: dict[str, Any]) -> None:
                         storage.save_attendance(owner_id, session_date.isoformat(), class_name.strip(), records, access_token=access_token)
                         st.success("Attendance saved for this class and date.")
                         st.rerun()
-                    except Exception:
-                        st.error("Attendance could not be saved. Confirm every status and try again.")
+                    except Exception as exc:
+                        st.error("Attendance could not be saved. Confirm every status and check the account’s database configuration.")
+                        st.caption(_safe_storage_error(exc))
         with c2:
             if not is_demo:
                 remove_id = st.selectbox("Remove student", [None] + [r.get("id") for r in roster], format_func=lambda value: "Choose…" if value is None else next((r.get("name", "Student") for r in roster if r.get("id") == value), "Student"), key="remove_student_id")
