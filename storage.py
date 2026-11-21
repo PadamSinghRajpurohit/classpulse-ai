@@ -82,6 +82,28 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_students_owner_name
                 ON students(owner_id, name COLLATE NOCASE);
+            CREATE TABLE IF NOT EXISTS classes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(owner_id, name)
+            );
+            CREATE INDEX IF NOT EXISTS idx_classes_owner_name
+                ON classes(owner_id, name COLLATE NOCASE);
+            CREATE TABLE IF NOT EXISTS class_students (
+                owner_id TEXT NOT NULL,
+                class_id INTEGER NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+                student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(class_id, student_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_class_students_owner_class
+                ON class_students(owner_id, class_id);
+            CREATE TABLE IF NOT EXISTS app_migrations (
+                name TEXT PRIMARY KEY,
+                applied_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS attendance_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 owner_id TEXT NOT NULL,
@@ -122,15 +144,137 @@ def init_db() -> None:
             db.execute("DROP TABLE attendance_records_legacy")
             db.execute("CREATE INDEX idx_attendance_owner_date ON attendance_records(owner_id, session_date DESC)")
 
+        # One-time migration from the old account-wide roster. Previous app
+        # versions did not track class membership, so attach those existing
+        # students to every previously used class label. New memberships stay
+        # explicit after this migration has been recorded.
+        migration = "class_scoped_rosters_v1"
+        applied = db.execute("SELECT 1 FROM app_migrations WHERE name = ?", (migration,)).fetchone()
+        if not applied:
+            owners = db.execute("SELECT DISTINCT owner_id FROM students").fetchall()
+            timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            for owner in owners:
+                owner_id = str(owner["owner_id"])
+                class_rows = db.execute(
+                    "SELECT id FROM classes WHERE owner_id = ? ORDER BY id", (owner_id,)
+                ).fetchall()
+                if not class_rows:
+                    old_labels = db.execute(
+                        "SELECT DISTINCT class_name FROM attendance_records "
+                        "WHERE owner_id = ? AND TRIM(class_name) <> '' ORDER BY class_name COLLATE NOCASE",
+                        (owner_id,),
+                    ).fetchall()
+                    labels = [str(row["class_name"]).strip() for row in old_labels] or ["Class 1"]
+                    for label in labels:
+                        db.execute(
+                            "INSERT OR IGNORE INTO classes(owner_id, name, created_at) VALUES (?, ?, ?)",
+                            (owner_id, label[:100], timestamp),
+                        )
+                    class_rows = db.execute(
+                        "SELECT id FROM classes WHERE owner_id = ? ORDER BY id", (owner_id,)
+                    ).fetchall()
+                student_rows = db.execute("SELECT id FROM students WHERE owner_id = ?", (owner_id,)).fetchall()
+                for class_row in class_rows:
+                    for student in student_rows:
+                        db.execute(
+                            "INSERT OR IGNORE INTO class_students(owner_id, class_id, student_id, created_at) "
+                            "VALUES (?, ?, ?, ?)",
+                            (owner_id, int(class_row["id"]), int(student["id"]), timestamp),
+                        )
+            db.execute(
+                "INSERT INTO app_migrations(name, applied_at) VALUES (?, ?)", (migration, timestamp)
+            )
 
-def list_students(owner_id: int | str) -> list[dict[str, Any]]:
-    """List the authenticated owner's locally stored roster."""
+
+def list_classes(owner_id: int | str) -> list[dict[str, Any]]:
+    """List this owner's local classes for attendance and session selection."""
     with _connect() as db:
         rows = db.execute(
-            "SELECT id, student_code, name, created_at FROM students WHERE owner_id = ? ORDER BY name COLLATE NOCASE",
+            "SELECT id, name, created_at FROM classes WHERE owner_id = ? ORDER BY name COLLATE NOCASE",
             (str(owner_id),),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def create_class(owner_id: int | str, name: str) -> int:
+    """Create an owner-scoped local class and return its ID."""
+    normalized = (name or "").strip()
+    if not normalized or len(normalized) > 100:
+        raise ValueError("Class name is required and must be 100 characters or fewer")
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _connect() as db:
+        try:
+            cursor = db.execute(
+                "INSERT INTO classes(owner_id, name, created_at) VALUES (?, ?, ?)",
+                (str(owner_id), normalized, timestamp),
+            )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError("A class with that name already exists") from exc
+        return int(cursor.lastrowid)
+
+
+def list_students(owner_id: int | str, class_id: int | None = None) -> list[dict[str, Any]]:
+    """List an owner's roster, optionally limited to one class membership."""
+    with _connect() as db:
+        if class_id is None:
+            rows = db.execute(
+                "SELECT id, student_code, name, created_at FROM students WHERE owner_id = ? ORDER BY name COLLATE NOCASE",
+                (str(owner_id),),
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT s.id, s.student_code, s.name, s.created_at FROM students AS s "
+                "JOIN class_students AS cs ON cs.student_id = s.id "
+                "JOIN classes AS c ON c.id = cs.class_id "
+                "WHERE s.owner_id = ? AND cs.owner_id = ? AND c.owner_id = ? AND c.id = ? "
+                "ORDER BY s.name COLLATE NOCASE",
+                (str(owner_id), str(owner_id), str(owner_id), int(class_id)),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_unenrolled_students(owner_id: int | str, class_id: int) -> list[dict[str, Any]]:
+    """List existing local students who are not yet members of this class."""
+    with _connect() as db:
+        rows = db.execute(
+            "SELECT s.id, s.student_code, s.name FROM students AS s "
+            "JOIN classes AS c ON c.owner_id = s.owner_id "
+            "WHERE s.owner_id = ? AND c.id = ? AND NOT EXISTS ("
+            "SELECT 1 FROM class_students AS cs WHERE cs.owner_id = s.owner_id "
+            "AND cs.class_id = c.id AND cs.student_id = s.id) "
+            "ORDER BY s.name COLLATE NOCASE",
+            (str(owner_id), int(class_id)),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def enroll_student(owner_id: int | str, class_id: int, student_id: int) -> bool:
+    """Enroll an existing local student in another local class."""
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with _connect() as db:
+        class_exists = db.execute(
+            "SELECT 1 FROM classes WHERE owner_id = ? AND id = ?", (str(owner_id), int(class_id))
+        ).fetchone()
+        student_exists = db.execute(
+            "SELECT 1 FROM students WHERE owner_id = ? AND id = ?", (str(owner_id), int(student_id))
+        ).fetchone()
+        if not class_exists or not student_exists:
+            raise ValueError("Choose a class and student from this local account")
+        cursor = db.execute(
+            "INSERT OR IGNORE INTO class_students(owner_id, class_id, student_id, created_at) VALUES (?, ?, ?, ?)",
+            (str(owner_id), int(class_id), int(student_id), timestamp),
+        )
+        return cursor.rowcount > 0
+
+
+def remove_student_from_class(owner_id: int | str, class_id: int, student_id: int) -> bool:
+    """Remove a student from one class while keeping their other class data."""
+    with _connect() as db:
+        cursor = db.execute(
+            "DELETE FROM class_students WHERE owner_id = ? AND class_id = ? AND student_id = ?",
+            (str(owner_id), int(class_id), int(student_id)),
+        )
+        return cursor.rowcount > 0
 
 
 def add_student(
@@ -139,6 +283,7 @@ def add_student(
     student_code: str = "",
     *,
     student_id: str | None = None,
+    class_id: int | None = None,
 ) -> int:
     """Add a local roster entry and return its local integer ID.
 
@@ -160,9 +305,21 @@ def add_student(
                 "INSERT INTO students(owner_id, student_code, name, created_at) VALUES (?, ?, ?, ?)",
                 (str(owner_id), code, normalized_name, timestamp),
             )
+            new_student_id = int(cursor.lastrowid)
+            if class_id is not None:
+                class_exists = db.execute(
+                    "SELECT 1 FROM classes WHERE owner_id = ? AND id = ?",
+                    (str(owner_id), int(class_id)),
+                ).fetchone()
+                if not class_exists:
+                    raise ValueError("Choose a class from this local account")
+                db.execute(
+                    "INSERT INTO class_students(owner_id, class_id, student_id, created_at) VALUES (?, ?, ?, ?)",
+                    (str(owner_id), int(class_id), new_student_id, timestamp),
+                )
         except sqlite3.IntegrityError as exc:
             raise ValueError("That student code is already in this roster") from exc
-        return int(cursor.lastrowid)
+        return new_student_id
 
 
 def save_attendance(
@@ -490,3 +647,4 @@ def _remote_summary(summary: dict[str, Any]) -> dict[str, Any]:
     if isinstance(codes, list):
         clean["recommendation_codes"] = [value for value in codes if isinstance(value, str) and value in allowed][:10]
     return clean
+
