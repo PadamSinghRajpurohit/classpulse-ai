@@ -70,6 +70,12 @@ Never push `.env`; it can contain private configuration and is ignored by Git. T
 
 The local Streamlit interface uses a persistent process and local SQLite, which does not fit Vercel's request-based Python Functions. Vercel therefore uses the lightweight, stateless WSGI app in `vercel_app.py` with the same Supabase Auth and owner-protected aggregate-summary table. The hosted preview records group totals only; it does not store student names, individual attendance rows, or uploaded media. Add `SUPABASE_URL` and the Supabase publishable key as Vercel project environment variables to enable sign-in and persistence. Do not add `GEMINI_API_KEY` unless you explicitly choose to run Gemini in that deployment.
 
+### Streamlit camera attendance and class rosters
+
+The Attendance page has a live camera counter. Choose or create a class, then explicitly press **Start camera & count** and allow browser camera access. A free MediaPipe face detector estimates the number of visible faces in the browser and returns only that numeric estimate to Streamlit. Frames are not uploaded or stored. The estimate is not a count of verified students: the teacher must compare the selected class roster, confirm each student as present or absent, and save attendance manually. It cannot identify who is in the room. If camera access is declined or the detector cannot load, manual attendance remains available.
+
+Each local class has its own roster. Students can be enrolled in more than one class; removing a student from a class does not delete them from other classes. Existing local rosters and attendance history are migrated into the class model when the app starts. Session analysis also lets the instructor choose a stored class so confirmed attendance is associated with the right class.
+
 The Vercel runtime uses the standard-library-only root `requirements.txt`. Streamlit Community Cloud has an isolated entrypoint and dependency file under `streamlit_cloud/`; this lets its full AI/media dependencies install without burdening the Vercel build.
 
 ### Install ClassPulse on a phone
