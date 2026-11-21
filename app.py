@@ -45,7 +45,7 @@ try:
 except ImportError:
     ai_pipeline = None  # type: ignore[assignment]
 
-from styles import APP_CSS
+from styles import APP_CSS, DARK_THEME_CSS
 
 
 st.set_page_config(
@@ -61,6 +61,8 @@ def _initialise() -> None:
         st.session_state.user = None
     if "analysis_result" not in st.session_state:
         st.session_state.analysis_result = None
+    if "dark_mode" not in st.session_state:
+        st.session_state.dark_mode = True
     if storage is not None:
         try:
             storage.init_db()
@@ -227,6 +229,7 @@ def _sidebar(user: Any) -> str:
             st.warning("Hosted SQLite data can reset after a restart. Add Supabase Auth and session-sync secrets for durable summaries; avoid real rosters in this deployment.")
         page = st.radio("Navigation", ["Overview", "Attendance", "Live session", "Insights", "AI teaching coach"], label_visibility="collapsed")
         st.markdown("<div class='sidebar-spacer'></div>", unsafe_allow_html=True)
+        st.toggle("Dark mode", key="dark_mode", help="Switch between dark and light appearance.")
         st.markdown('<div class="privacy-chip"><span class="privacy-dot"></span><div><b>Privacy first</b><small>Local analysis · No raw media saved</small></div></div>', unsafe_allow_html=True)
         st.divider()
         st.caption(_safe_user_name(user))
@@ -889,11 +892,18 @@ def main() -> None:
     st.markdown(APP_CSS, unsafe_allow_html=True)
     user = st.session_state.user
     if not user:
+        _, theme_col = st.columns([8, 1])
+        with theme_col:
+            st.toggle("Dark mode", key="dark_mode", help="Switch between dark and light appearance.")
+        if st.session_state.dark_mode:
+            st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
         if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and os.getenv("SUPABASE_SYNC_ENABLED", "").strip().casefold() not in {"1", "true", "yes"}:
             st.warning("Hosted SQLite data may reset after restarts. Configure Supabase Auth and session sync before using real class records.")
         _login_screen()
         return
     page = _sidebar(user)
+    if st.session_state.dark_mode:
+        st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
     data = _dashboard_data(user)
     if isinstance(user, dict) and user.get("demo"):
         st.info("Demo workspace · sample data only", icon=None)
