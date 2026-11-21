@@ -984,8 +984,12 @@ def main() -> None:
             st.toggle("Dark mode", key="dark_mode", help="Switch between dark and light appearance.")
         if st.session_state.dark_mode:
             st.markdown(DARK_THEME_CSS, unsafe_allow_html=True)
-        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud" and not _uses_persistent_supabase_storage(None):
-            st.warning("Hosted local data may reset after a restart. " + _supabase_setup_hint())
+        if os.getenv("CLASSPULSE_DEPLOYMENT") == "streamlit_community_cloud":
+            setup_hint = _supabase_setup_hint()
+            if setup_hint.startswith("Supabase settings are present"):
+                st.info("Supabase settings are present. Sign in with your Supabase Auth account to use your persistent class and attendance data.")
+            else:
+                st.warning("Hosted local data may reset after a restart. " + setup_hint)
         _login_screen()
         return
     page = _sidebar(user)
