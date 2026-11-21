@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from html import escape
 from io import BytesIO
+import importlib
 import os
 import hashlib
 from typing import Any
@@ -45,7 +46,11 @@ try:
 except ImportError:
     ai_pipeline = None  # type: ignore[assignment]
 
-from styles import APP_CSS, DARK_THEME_CSS
+import styles as _styles
+
+_styles = importlib.reload(_styles)
+APP_CSS = _styles.APP_CSS
+DARK_THEME_CSS = _styles.DARK_THEME_CSS
 
 
 st.set_page_config(
