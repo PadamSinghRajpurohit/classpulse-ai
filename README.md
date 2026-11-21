@@ -39,7 +39,7 @@ The app starts in local mode: accounts and data use a local SQLite database, and
 
 ### Run the same entrypoint used by Streamlit Community Cloud
 
-The hosted app uses `streamlit_cloud/app.py` as a small deployment entrypoint and `streamlit_cloud/requirements.txt` for dependencies. Locally, use `streamlit run app.py` from the repository root; it launches the same full app and uses the same dependency list. To mirror the hosted dependency command exactly, run `python -m pip install -r streamlit_cloud/requirements.txt` from the `streamlit_cloud` directory, then from the repository root run `streamlit run streamlit_cloud/app.py`.
+The hosted app uses `streamlit_cloud/app.py` as a small deployment entrypoint and `streamlit_cloud/requirements.txt` for dependencies. Locally, use `streamlit run app.py` from the repository root; it launches the same full app and uses the same dependency list. To mirror the hosted setup exactly, run `python -m pip install -r streamlit_cloud/requirements.txt` from the repository root, then run `streamlit run streamlit_cloud/app.py`.
 
 Streamlit Community Cloud and local mode share the application code, but their storage is not identical: local mode stores data in your computer's `data/classpulse.db`; Streamlit Cloud's local disk can reset during rebuilds. Configure Supabase for hosted authentication and persistent aggregate session summaries. Student roster and individual attendance rows remain in SQLite and are not synced to Supabase.
 
