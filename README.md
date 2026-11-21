@@ -91,7 +91,7 @@ The browser dashboard includes dark and light themes (dark is the default), a mo
 
 ## Optional integrations (not required for local-only use)
 
-- **Supabase (optional):** Supabase is not used in the default local setup. If you choose to enable it, create and configure your own Supabase project; never use another person's project or credentials. Only aggregate session summaries sync there; rosters and individual attendance stay in local SQLite. Apply `supabase/schema.sql` first and never use a service-role key in the app.
+- **Supabase (optional):** Supabase is not used in the default local setup. To enable hosted persistence, configure your own project's Auth URL and publishable/anon key in private Streamlit Secrets, set `AUTH_BACKEND="supabase"` and `SUPABASE_SYNC_ENABLED="true"`, and apply the versioned migrations under `supabase/migrations/`. Supabase Auth users' classes, rosters, attendance, and aggregate session summaries are stored in owner-scoped tables protected by Row Level Security. Never use a service-role key in the app or repository.
 - **Gemini (optional):** The teaching coach and quiz builder require a Gemini API key supplied by the person running the app. Without it, local attendance, analysis, dashboards, and manual workflows remain available. Do not send student names, contact details, grades, recordings, frames, or other identifying information to an AI service. Only submit non-identifying lesson topics/questions. API use is subject to Google's own terms and limits.
 
 You do not need to create a `.env` file for local-only use. If you later choose an integration, copy `.env.example` to `.env` and enter only your own credentials. `.env` and Streamlit secrets are excluded from Git. The repository contains no live API keys or Supabase credentials.
@@ -101,7 +101,7 @@ You do not need to create a `.env` file for local-only use. If you later choose 
 - Video, audio, and frame processing is opt-in and local by default.
 - Temporary media must be discarded after analysis; raw recordings are not part of the database.
 - Passwords are stored as salted password hashes, never in plaintext.
-- Student names and individual attendance records stay in the app's SQLite database and are not synced to Supabase. In a hosted deployment, that database is on the hosting server, not the instructor's device; use synthetic data until its access and retention have been reviewed.
+- Student names and individual attendance records are stored in SQLite for local-only installs. When Supabase Auth and sync are enabled, they are stored in the instructor's own Supabase project and isolated by Row Level Security. In a hosted SQLite-only deployment, the database is on the hosting server and may reset; configure Supabase before using real class records.
 - Engagement values are heuristic estimates with signal-quality caveats. They are not emotion detection or individual grades.
 - Use group-level summaries and instructor review. Do not use the app to determine student eligibility, discipline, grading, or other consequential outcomes.
 - Use HTTPS for deployed instances, set a strong Streamlit secrets policy, and review Supabase Row Level Security before enabling a hosted database.
