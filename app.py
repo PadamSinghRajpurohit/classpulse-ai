@@ -52,6 +52,11 @@ _styles = importlib.reload(_styles)
 APP_CSS = _styles.APP_CSS
 DARK_THEME_CSS = _styles.DARK_THEME_CSS
 
+_CAMERA_COUNTER = components.declare_component(
+    "classpulse_visible_face_counter",
+    path=os.path.join(os.path.dirname(__file__), "camera_counter"),
+)
+
 
 st.set_page_config(
     page_title="ClassPulse AI | Classroom intelligence",
@@ -301,13 +306,49 @@ def _render_attendance(data: dict[str, Any]) -> None:
     user = st.session_state.get("user") or {}
     owner_id = user.get("id") if isinstance(user, dict) else None
     is_demo = isinstance(user, dict) and user.get("demo")
-    existing_classes = [c.get("name", "") for c in data.get("classes", []) if c.get("name")]
-    controls = st.columns([1.4, 1, 1.6])
+    class_id = None
+    if is_demo:
+        class_name = st.selectbox(
+            "Class",
+            [c.get("name", "Class 1") for c in data.get("classes", [])] or ["Class 1"],
+            key="attendance_demo_class",
+        )
+    else:
+        try:
+            local_classes = storage.list_classes(owner_id) if storage is not None and owner_id is not None else []
+        except Exception:
+            local_classes = []
+            st.error("Local classes could not be loaded. Check database setup and refresh.")
+        if not local_classes:
+            st.info("Create a class first. Each class keeps its own roster and attendance history.")
+            with st.form("create_local_class_form", clear_on_submit=True):
+                new_class = st.text_input("Class name", max_chars=100, placeholder="e.g. Grade 8 · Science")
+                create = st.form_submit_button("Create class", type="primary")
+                if create:
+                    try:
+                        class_id = storage.create_class(owner_id, new_class)
+                        st.success("Class created. Add its students below.")
+                        st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+                    except Exception:
+                        st.error("Class could not be created in local storage.")
+            session_date = st.date_input("Session date", value=date.today(), key="attendance_session_date")
+            st.markdown("<div class='privacy-note'>Local SQLite roster. Camera frames stay in your browser; only an approximate count is returned.</div>", unsafe_allow_html=True)
+            return
+        selected = st.selectbox(
+            "Class",
+            local_classes,
+            format_func=lambda row: row["name"],
+            key="attendance_class_select",
+        )
+        class_id = int(selected["id"])
+        class_name = selected["name"]
+    controls = st.columns([1, 1.6])
     with controls[0]:
-        class_name = st.text_input("Class name", value=existing_classes[0] if existing_classes else "Class 1", max_chars=100, key="attendance_class_name")
-    with controls[1]: session_date = st.date_input("Session date", value=date.today(), key="attendance_session_date")
-    with controls[2]:
-        st.markdown("<div class='privacy-note'>Student names and attendance are stored in this app’s SQLite database, separate from Supabase and Gemini. A hosted app stores this file on its server.</div>", unsafe_allow_html=True)
+        session_date = st.date_input("Session date", value=date.today(), key="attendance_session_date")
+    with controls[1]:
+        st.markdown("<div class='privacy-note'>Roster and attendance use local SQLite. Camera frames are analyzed in your browser; only an approximate count returns to this app.</div>", unsafe_allow_html=True)
 
     if is_demo:
         st.info("Demo roster · example names and statuses only. Changes stay in this browser session and are not saved to the database.")
@@ -328,13 +369,13 @@ def _render_attendance(data: dict[str, Any]) -> None:
             roster = st.session_state.get("demo_roster", [])
     else:
         try:
-            roster = storage.list_students(owner_id) if storage is not None and owner_id is not None else []
+            roster = storage.list_students(owner_id, class_id) if storage is not None and owner_id is not None else []
         except Exception:
             roster = []
             st.error("The local roster could not be loaded. Check the database setup and refresh.")
 
     if not is_demo:
-        with st.expander("Add a student to this local roster", expanded=not bool(roster)):
+        with st.expander("Manage this class roster", expanded=not bool(roster)):
             with st.form("add_student_form", clear_on_submit=True):
                 new_name = st.text_input("Student name", max_chars=100)
                 new_code = st.text_input("Roster code (optional)", max_chars=32, help="Leave blank to create a local roster code.")
@@ -346,11 +387,20 @@ def _render_attendance(data: dict[str, Any]) -> None:
                         st.error("Enter a student name.")
                     else:
                         try:
-                            storage.add_student(owner_id, new_name.strip(), new_code.strip())
-                            st.success("Student added to your local roster.")
+                            storage.add_student(owner_id, new_name.strip(), new_code.strip(), class_id=class_id)
+                            st.success("Student added to this class roster.")
                             st.rerun()
                         except Exception:
                             st.error("Student could not be added. Check for a duplicate roster code and try again.")
+            if class_id is not None:
+                unenrolled = storage.list_unenrolled_students(owner_id, class_id)
+                if unenrolled:
+                    with st.form("enroll_existing_student_form", clear_on_submit=True):
+                        existing_id = st.selectbox("Add an existing local student", unenrolled, format_func=lambda row: f"{row['name']} · {row['student_code']}")
+                        if st.form_submit_button("Enroll in this class"):
+                            storage.enroll_student(owner_id, class_id, int(existing_id["id"]))
+                            st.success("Student enrolled in this class.")
+                            st.rerun()
 
     if roster:
         prior_status = {}
@@ -413,8 +463,8 @@ def _render_attendance(data: dict[str, Any]) -> None:
                 confirm_remove = st.checkbox("Confirm local removal", key="confirm_remove_student")
                 if st.button("Remove", disabled=remove_id is None or not confirm_remove, key="remove_student_button"):
                     try:
-                        storage.delete_student(owner_id, int(remove_id))
-                        st.success("Student removed from the local roster.")
+                        storage.remove_student_from_class(owner_id, class_id, int(remove_id))
+                        st.success("Student removed from this class. Their other classes and history remain.")
                         st.rerun()
                     except Exception:
                         st.error("Student could not be removed.")
@@ -425,119 +475,13 @@ def _render_attendance(data: dict[str, Any]) -> None:
         st.download_button("Download confirmed attendance CSV", csv_rows.to_csv(index=False), file_name=f"attendance-{session_date.isoformat()}.csv", mime="text/csv", disabled=not marked)
     else:
         st.info("Your local roster is empty. Add students above to start manual attendance.")
-    with st.expander("Optional webcam preview · no capture or upload"):
-        st.caption("Preview only. Camera access starts after you press Start, and the stream is stopped when you stop the preview or close the page.")
-        components.html(
-            r"""
-            <!doctype html>
-            <html><head><meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-              *{box-sizing:border-box} body{margin:0;background:#fff;color:#20243a;font:14px system-ui,-apple-system,"Segoe UI",sans-serif}
-              .wrap{border:1px solid #e9eaf2;border-radius:14px;padding:16px;background:linear-gradient(140deg,#fbfaff,#f5f6fb)}
-              .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
-              select,button{font:600 13px system-ui,-apple-system,"Segoe UI",sans-serif;border-radius:9px;padding:10px 12px}
-              select{background:#fff;border:1px solid #dfe1eb;color:#353950;min-width:150px}
-              button{cursor:pointer;border:1px solid transparent}
-              #start{background:linear-gradient(115deg,#785ff6,#5b45df);color:white;box-shadow:0 5px 14px #7357f52b}
-              #stop{background:#fff;border-color:#daddea;color:#535970}
-              button:disabled{cursor:default;opacity:.48}
-              .status{margin-left:auto;color:#7c8297;font-size:12px;min-width:160px;text-align:right}
-              .status.on{color:#158669}.status.error{color:#bd4453}
-              .stage{position:relative;overflow:hidden;border-radius:11px;background:#171a2c;aspect-ratio:16/9;max-height:390px;display:flex;align-items:center;justify-content:center}
-              video{display:none;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
-              .placeholder{padding:18px;text-align:center;color:#bfc4d7;font-size:13px;line-height:1.6}
-              .lens{width:36px;height:36px;border-radius:12px;background:#332b61;color:#b3a7ff;display:flex;align-items:center;justify-content:center;margin:0 auto 11px;font-size:18px}
-              .foot{margin:10px 2px 0;color:#858ba1;font-size:11px}
-              @media(max-width:520px){.wrap{padding:12px}.status{width:100%;text-align:left;margin:0}.stage{aspect-ratio:4/3;max-height:330px}.toolbar{gap:8px}select,button{flex:1}}
-            </style></head><body>
-              <div class="wrap">
-                <div class="toolbar">
-                  <select id="facing" aria-label="Choose camera">
-                    <option value="user">Front camera</option>
-                    <option value="environment">Rear camera</option>
-                  </select>
-                  <button id="start" type="button">Start preview</button>
-                  <button id="stop" type="button" disabled>Stop</button>
-                  <span id="status" class="status" role="status" aria-live="polite">Camera is off</span>
-                </div>
-                <div class="stage">
-                  <video id="preview" autoplay playsinline muted></video>
-                  <div id="placeholder" class="placeholder"><div class="lens">◎</div>Camera preview is off.<br>Press Start when you’re ready to view it.</div>
-                </div>
-                <div class="foot">Live preview stays in this browser. No frames are recorded, saved, or sent to the app.</div>
-              </div>
-              <script>
-                (() => {
-                  const video = document.getElementById('preview');
-                  const startButton = document.getElementById('start');
-                  const stopButton = document.getElementById('stop');
-                  const status = document.getElementById('status');
-                  const placeholder = document.getElementById('placeholder');
-                  const facing = document.getElementById('facing');
-                  let stream = null;
-                  function setStatus(message, state='') {
-                    status.textContent = message;
-                    status.className = `status ${state}`.trim();
-                  }
-                  function stopPreview(message='Camera is off') {
-                    if (stream) {
-                      stream.getTracks().forEach(track => track.stop());
-                      stream = null;
-                    }
-                    video.pause();
-                    video.srcObject = null;
-                    video.style.display = 'none';
-                    placeholder.style.display = 'block';
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
-                    setStatus(message);
-                  }
-                  async function startPreview() {
-                    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-                      setStatus('Use localhost or HTTPS to preview camera', 'error');
-                      return;
-                    }
-                    startButton.disabled = true;
-                    setStatus('Waiting for camera permission…');
-                    try {
-                      // This is the only getUserMedia call, and it runs only from this click handler.
-                      stream = await navigator.mediaDevices.getUserMedia({
-                        audio: false,
-                        video: {
-                          facingMode: { ideal: facing.value },
-                          width: { ideal: 1280 },
-                          height: { ideal: 720 }
-                        }
-                      });
-                      video.srcObject = stream;
-                      video.style.transform = facing.value === 'user' ? 'scaleX(-1)' : 'none';
-                      await video.play();
-                      placeholder.style.display = 'none';
-                      video.style.display = 'block';
-                      stopButton.disabled = false;
-                      startButton.disabled = false;
-                      setStatus('Live preview · camera on', 'on');
-                    } catch (error) {
-                      stopPreview(error?.name === 'NotAllowedError'
-                        ? 'Camera permission was not granted'
-                        : 'Camera unavailable · check device and browser settings');
-                      status.className = 'status error';
-                    }
-                  }
-                  startButton.addEventListener('click', startPreview);
-                  stopButton.addEventListener('click', () => stopPreview());
-                  window.addEventListener('pagehide', () => stopPreview());
-                  window.addEventListener('beforeunload', () => stopPreview());
-                  document.addEventListener('visibilitychange', () => {
-                    if (document.hidden && stream) stopPreview('Preview stopped while page was hidden');
-                  });
-                })();
-              </script>
-            </body></html>
-            """,
-            height=500,
-            scrolling=False,
-        )
+    with st.expander("Live camera attendance estimate", expanded=True):
+        st.caption("Select the class above, then start the camera. The browser estimates how many faces are visible and never identifies people or marks names present. Confirm each student in the roster before saving.")
+        camera_state = _CAMERA_COUNTER(key=f"attendance_camera_{owner_id}_{class_id or class_name}", default={"active": False, "count": None})
+        if isinstance(camera_state, dict) and camera_state.get("active") and isinstance(camera_state.get("count"), int):
+            visible_estimate = max(0, min(1000, camera_state["count"]))
+            st.metric("Approx. visible faces · estimate", visible_estimate)
+            st.caption("This is a view count, not a named-student attendance record. Confirm the roster manually.")
     with st.expander("Optional: analyze a classroom image"):
         st.caption("This is opt-in and uses a still image only. Local vision estimates visible faces; it does not recognize identities or mark attendance automatically.")
         image = st.file_uploader("Choose an image", type=["jpg", "jpeg", "png", "webp"], key="attendance_image")
@@ -568,12 +512,30 @@ def _render_session() -> None:
     with st.container(border=True):
         st.subheader("Choose session media")
         st.caption("The Python pipeline estimates group-level visual cues and broad audio activity; it does not identify people. Media is processed temporarily by this app server and is not retained in project storage or the database. A hosted deployment processes media on its host; run this app locally if recordings must stay on the instructor’s device.")
-        session_label = st.text_input(
-            "Class / session name",
-            value="Class session",
-            max_chars=100,
-            help="Use the same class name shown on Attendance if you want to attach its manual present/absent counts.",
-        )
+        session_user = st.session_state.get("user") or {}
+        session_owner = session_user.get("id") if isinstance(session_user, dict) else None
+        session_classes = []
+        if not (isinstance(session_user, dict) and session_user.get("demo")) and storage is not None and session_owner is not None:
+            try:
+                session_classes = storage.list_classes(session_owner)
+            except Exception:
+                session_classes = []
+        if session_classes:
+            chosen_class = st.selectbox(
+                "Class / session name",
+                session_classes,
+                format_func=lambda row: row["name"],
+                key="analysis_class_select",
+                help="Choose the class whose confirmed attendance you want to attach to this analysis.",
+            )
+            session_label = chosen_class["name"]
+        else:
+            session_label = st.text_input(
+                "Class / session name",
+                value="Class session",
+                max_chars=100,
+                help="Use the same class name shown on Attendance if you want to attach its manual present/absent counts.",
+            )
         session_date = st.date_input("Session date", value=date.today(), key="analysis_session_date")
         local_now = datetime.now().astimezone()
         session_start_time = st.time_input(
