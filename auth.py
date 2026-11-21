@@ -19,7 +19,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-import storage
+import classpulse_storage as storage
 
 _PBKDF2_ITERATIONS = 310_000
 _EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
