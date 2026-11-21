@@ -2,6 +2,47 @@
 
 A Python-first, privacy-conscious classroom attendance and engagement prototype. It combines local media analysis with instructor-facing summaries; it is designed as a teaching aid, not an automated decision system.
 
+## Quick start: run the Streamlit app
+
+This repository includes the complete Python app. To run the same Streamlit interface on your computer, install Python 3.12, Git, and a current Chrome, Edge, or Firefox browser, then clone the repository:
+
+```bash
+git clone https://github.com/PadamSinghRajpurohit/classpulse-ai.git
+cd classpulse-ai
+```
+
+Create a virtual environment and install the Streamlit dependencies:
+
+**Windows PowerShell**
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-streamlit.txt
+streamlit run app.py
+```
+
+**macOS / Linux**
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-streamlit.txt
+streamlit run app.py
+```
+
+Open the local address printed by Streamlit, usually <http://localhost:8501>. Sign up, then use the sidebar to move between Overview, Attendance, Live session, Insights, and the AI teaching coach. Camera and microphone features request browser permission only when you start them. Allow access on `localhost` to use those features; manual attendance remains available without camera permission. The camera face count and microphone sound sampler are estimates, so review results before saving.
+
+The app starts in local mode: accounts and data use a local SQLite database, and no Gemini or Supabase key is needed for the core app. To enable the Gemini coach/quiz generator or Supabase sign-in and aggregate-summary sync, configure your own credentials as described below. Never copy the live keys from another deployment; keys are private, are not included in this repository, and each user must use their own.
+
+### Run the same entrypoint used by Streamlit Community Cloud
+
+The hosted app uses `streamlit_cloud/app.py` as a small deployment entrypoint and `streamlit_cloud/requirements.txt` for dependencies. Locally, use `streamlit run app.py` from the repository root; it launches the same full app and uses the same dependency list. To mirror the hosted dependency command exactly, run `python -m pip install -r streamlit_cloud/requirements.txt` from the `streamlit_cloud` directory, then from the repository root run `streamlit run streamlit_cloud/app.py`.
+
+Streamlit Community Cloud and local mode share the application code, but their storage is not identical: local mode stores data in your computer's `data/classpulse.db`; Streamlit Cloud's local disk can reset during rebuilds. Configure Supabase for hosted authentication and persistent aggregate session summaries. Student roster and individual attendance rows remain in SQLite and are not synced to Supabase.
+
 ## Run locally
 
 ```powershell
@@ -82,3 +123,4 @@ Copy `.env.example` to `.env` for local configuration. The `supabase` Python pac
 5. Add `GEMINI_API_KEY` in Streamlit Secrets to enable the teaching coach and quiz builder. They use the Gemini 3.5 Flash-Lite text API by default (`GEMINI_MODEL` can override it). Gemini 2.5 Flash is restricted for new projects, so ClassPulse uses the current model instead. Keep the key in Streamlit Secrets, never in GitHub. Gemini's free tier has usage limits; Google's pricing page says free-tier submitted content may be used to improve products, so send only non-identifying lesson topics/questions. Review Google's current [Gemini API pricing and data terms](https://ai.google.dev/gemini-api/docs/pricing) before use.
 
 Streamlit Community Cloud's local SQLite filesystem may reset when the app is rebuilt or restarted. Use Supabase Auth and session-summary sync for persistent remote summaries. Roster/individual attendance still use local SQLite and should not be treated as durable in this hosted deployment. Free hosting and API quotas can change; do not upload real student recordings until privacy, retention, access, and consent have been reviewed.
+
