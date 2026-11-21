@@ -13,7 +13,7 @@ import urllib.request
 from typing import Any
 
 API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.5-flash-lite"
 MAX_INPUT_CHARS = 6000
 MAX_HISTORY_TURNS = 8
 MAX_OUTPUT_TOKENS = 1400
